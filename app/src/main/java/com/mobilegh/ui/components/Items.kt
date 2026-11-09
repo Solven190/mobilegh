@@ -3,6 +3,7 @@ package com.mobilegh.ui.components
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -56,12 +57,14 @@ import com.mobilegh.i18n.trf
 @Composable
 fun LinkActionsMenu(expanded: Boolean, onDismiss: () -> Unit, url: String) {
     val ctx = LocalContext.current
-    val g = Gh.c
-    DropdownMenu(expanded, onDismissRequest = onDismiss, containerColor = g.canvas) {
-        DropdownMenuItem(text = { Text(tr("复制链接"), color = g.fg) }, onClick = { onDismiss(); ctx.copy(url, tr("已复制链接")) })
-        DropdownMenuItem(text = { Text(tr("分享"), color = g.fg) }, onClick = { onDismiss(); ctx.share(url) })
-        DropdownMenuItem(text = { Text(tr("在浏览器打开"), color = g.fg) }, onClick = { onDismiss(); ctx.openBrowser(url) })
+    val actions = remember(url) {
+        listOf(
+            MenuAction(tr("复制链接"), icon = R.drawable.oc_copy) { ctx.copy(url, tr("已复制链接")) },
+            MenuAction(tr("分享"), icon = R.drawable.oc_share_android) { ctx.share(url) },
+            MenuAction(tr("在浏览器打开"), icon = R.drawable.oc_globe) { ctx.openBrowser(url) },
+        )
     }
+    CardDropdownMenu(expanded = expanded, onDismissRequest = onDismiss, actions = actions)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -72,15 +75,18 @@ fun RepoItem(repo: Repo, showOwner: Boolean = true, extra: String? = null) {
     var menu by remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth()
-            .combinedClickable(onClick = { nav.push(Screen.Repo(repo.owner.login, repo.name)) }, onLongClick = if (repo.htmlUrl.isBlank()) null else ({ menu = true }))
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { nav.push(Screen.Repo(repo.owner.login, repo.name)) },
+                onLongClick = if (repo.htmlUrl.isBlank()) null else ({ menu = true }),
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         LinkActionsMenu(menu, { menu = false }, repo.htmlUrl)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (showOwner) {
-                Avatar(repo.owner.avatarUrl, 18.dp, square = repo.owner.type == "Organization")
-                Spacer(Modifier.width(8.dp))
-            }
+            Avatar(repo.owner.avatarUrl, 18.dp, square = repo.owner.type == "Organization")
+            Spacer(Modifier.width(8.dp))
             Text(
                 buildAnnotatedString {
                     if (showOwner) withStyle(SpanStyle(color = g.fgMuted)) { append(repo.owner.login + " / ") }
@@ -123,7 +129,10 @@ fun RepoItem(repo: Repo, showOwner: Boolean = true, extra: String? = null) {
 fun UserItem(user: User, subtitle: String? = null) {
     val nav = LocalNav.current
     Row(
-        Modifier.fillMaxWidth().clickable {
+        Modifier.fillMaxWidth().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+        ) {
             nav.push(if (user.type == "Organization") Screen.Org(user.login) else Screen.Profile(user.login))
         }.padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.Top,
@@ -154,7 +163,12 @@ fun IssueItem(issue: Issue, repoName: String? = null, onClick: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = if (issue.htmlUrl.isBlank()) null else ({ menu = true }))
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+                onLongClick = if (issue.htmlUrl.isBlank()) null else ({ menu = true }),
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         LinkActionsMenu(menu, { menu = false }, issue.htmlUrl)
@@ -195,7 +209,12 @@ fun PullItem(pr: Pull, onClick: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = if (pr.htmlUrl.isBlank()) null else ({ menu = true }))
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+                onLongClick = if (pr.htmlUrl.isBlank()) null else ({ menu = true }),
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         LinkActionsMenu(menu, { menu = false }, pr.htmlUrl)
@@ -253,9 +272,15 @@ fun EventItem(e: Event) {
     val (o, r) = e.repo.name.split('/').let { (it.getOrNull(0) ?: "") to (it.getOrNull(1) ?: "") }
     val (icon, action, detail, target) = describeEvent(e, o, r)
     Row(
-        Modifier.fillMaxWidth().clickable { nav.push(target) }.padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+        ) { nav.push(target) }.padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        Avatar(e.actor.avatarUrl, 32.dp, Modifier.clickable { nav.push(Screen.Profile(e.actor.login)) })
+        Avatar(e.actor.avatarUrl, 32.dp, Modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+        ) { nav.push(Screen.Profile(e.actor.login)) })
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -280,9 +305,16 @@ fun EventItem(e: Event) {
     }
 }
 
-/** 动态分类（用于按类型筛选信息流） */
-enum class EventCat(private val labelZh: String) { All("全部"), Push("提交"), Pr("PR"), Issue("Issue"), Release("发布"), Social("Star/Fork"), Other("其他");
-    val label: String get() = trc(labelZh, "cat") }
+/** 动态分类（用于按类型筛选信息流，去掉无意义的「其他」） */
+enum class EventCat(private val labelZh: String) {
+    All("全部"), Push("提交"), Pr("PR"), Issue("Issue"), Release("发布"), Social("Star/Fork"), Other("其他");
+    val label: String get() = trc(labelZh, "cat")
+
+    companion object {
+        /** 供用户筛选的选项集合（去掉无意义的「其他」） */
+        val filterOptions = listOf(All, Push, Pr, Issue, Release, Social)
+    }
+}
 
 fun eventCat(e: Event): EventCat = when (e.type) {
     "PushEvent", "CreateEvent", "DeleteEvent", "GollumEvent", "CommitCommentEvent" -> EventCat.Push
@@ -292,6 +324,17 @@ fun eventCat(e: Event): EventCat = when (e.type) {
     "ReleaseEvent" -> EventCat.Release
     "WatchEvent", "ForkEvent", "PublicEvent" -> EventCat.Social
     else -> EventCat.Other
+}
+
+/**
+ * 推送动态点开后要打开的位置：这次推送本身的提交范围（before → head），而不是整个分支的提交历史。
+ * 新建分支时 before 是全零，没有可比较的基准，退回该分支的提交列表；缺少 head 时同样退回。
+ */
+internal fun pushEventTarget(o: String, r: String, branch: String?, payload: kotlinx.serialization.json.JsonObject): Screen {
+    val before = payload.str("before")?.takeIf { it.isNotBlank() && it.any { c -> c != '0' } }
+    val head = payload.str("head")
+    return if (before != null && !head.isNullOrBlank()) Screen.Compare(o, r, base = before, head = head)
+    else Screen.Commits(o, r, branch)
 }
 
 private data class EventDesc(val icon: Int, val action: String, val detail: String?, val target: Screen)
@@ -312,11 +355,12 @@ private fun describeEvent(e: Event, o: String, r: String): EventDesc {
             val branch = p.str("ref")?.removePrefix("refs/heads/")
             val commits = (p["commits"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it.str("message")?.lineSequence()?.firstOrNull() }
             val size = p.int("size") ?: commits?.size
+            val target = pushEventTarget(o, r, branch, p)
             EventDesc(
                 R.drawable.oc_repo_push,
                 trf("推送{0}到 {1} @", size?.let { trf(" {0} 个提交", it) } ?: "", branch ?: ""),
                 commits?.take(3)?.joinToString("\n") { "• $it" },
-                Screen.Commits(o, r, branch),
+                target,
             )
         }
         "IssuesEvent" -> {

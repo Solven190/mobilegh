@@ -18,6 +18,7 @@ class App : Application() {
         super.onCreate()
         com.mobilegh.i18n.I18n.init(this)
         Api.cacheDir = cacheDir
+        com.mobilegh.data.ImageFetch.init(cacheDir)
         AppLog.init(this)
         com.mobilegh.data.AppNetwork.init(this)
         Net.init(this)
@@ -28,6 +29,7 @@ class App : Application() {
         WidgetStore.listener = { kind -> Widgets.update(this, kind) }
         com.mobilegh.data.MobileApprovalMonitor.reload(this)
         History.init(this)
+        com.mobilegh.data.SavedItems.init(this)
         com.mobilegh.data.HomePrefs.init(this)
         Update.init(this)
         LinkDefault.init(this)
@@ -38,5 +40,10 @@ class App : Application() {
         Update.checkQuietly()
         // 每次启动静默测速，自动选择最快的加速节点
         Net.speedTestAsync()
+        // 成就缓存与 github.com 连接预热：成就页第一次打开不用再等握手
+        com.mobilegh.data.Web.init(this)
+        com.mobilegh.data.Web.warmUp()
+        // 自动静默续期 GitHub 网页会话（防止超过 14 天未使用闲置过期）
+        com.mobilegh.data.WebAttachmentUploader.renewSessionAsync()
     }
 }

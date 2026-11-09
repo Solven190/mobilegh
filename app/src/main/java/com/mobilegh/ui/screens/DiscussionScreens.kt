@@ -1,6 +1,8 @@
 package com.mobilegh.ui.screens
 
 import androidx.compose.foundation.border
+import com.mobilegh.ui.components.verticalScrollWithBar
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import androidx.compose.foundation.background
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.draw.clip
@@ -225,7 +227,7 @@ fun DiscussionsScreen(
                 val allowed = repo.canWrite(canWrite && Session.token != null && !Session.authExpired)
                 val shown = discussions.items.filter { it.matches(query) }
                 val listState = rememberLazyListState()
-                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                ScrollbarLazyColumn(Modifier.fillMaxSize(), state = listState) {
                     item {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -369,6 +371,23 @@ fun DiscussionDetailScreen(
     Page(trf("讨论 #{0}", number), subtitle = "$owner/$name", actions = {
         MoreMenu(buildList {
             val d = t?.discussion
+            if (d != null) {
+                val savedId = "discussion:$owner/$name#$number"
+                val isSaved = com.mobilegh.data.SavedItems.isSaved(savedId)
+                add(MenuAction(if (isSaved) tr("移出稍后阅读") else tr("保存到稍后阅读")) {
+                    com.mobilegh.data.SavedItems.toggle(
+                        com.mobilegh.data.SavedItem(
+                            id = savedId,
+                            kind = com.mobilegh.data.SavedKind.Discussion,
+                            owner = owner,
+                            name = name,
+                            number = number,
+                            title = d.title,
+                        )
+                    )
+                    ctx.toast(if (isSaved) tr("已移出稍后阅读") else tr("已保存到稍后阅读"))
+                })
+            }
             if (d != null && d.viewerCanUpdate) add(MenuAction(tr("编辑讨论")) { editingDiscussion = true })
             add(MenuAction(tr("刷新")) { reload() })
             addLinkActions(ctx, url)
@@ -422,7 +441,7 @@ fun DiscussionDetailScreen(
                 }
             }
 
-            LazyColumn(Modifier.fillMaxSize()) {
+            ScrollbarLazyColumn(Modifier.fillMaxSize()) {
                 item(key = "header") {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(discussion.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = g.fg)
@@ -676,7 +695,7 @@ private fun DiscussionComposeDialog(
             }
         },
     ) {
-        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.heightIn(max = 480.dp).verticalScrollWithBar(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (categories != null) {
                 Dropdown(categories.find { it.id == category }?.name ?: tr("选择分类"), categories.map { it.name }, {
                     if (!sending) category = categories[it].id

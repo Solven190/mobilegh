@@ -61,11 +61,11 @@ object Update {
         private set
 
     /** 查询最新 Release，挑出匹配当前架构的 APK */
-    suspend fun check(): Info? {
+    suspend fun check(force: Boolean = true): Info? {
         checking = true
         error = null
         return try {
-            val rel = GitHub.latestRelease(OWNER, REPO, false) ?: return null.also { available = null }
+            val rel = GitHub.latestRelease(OWNER, REPO, force) ?: return null.also { available = null }
             val version = rel.tagName.trimStart('v', 'V')
             val apk = rel.assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
             val asset = apk.firstOrNull { it.name.contains(abi, ignoreCase = true) }
@@ -85,11 +85,32 @@ object Update {
         }
     }
 
+    /**
+     * 启动检查发现新版本时是否自动弹窗：同一版本只弹一次；选了「跳过此版本」后，这个版本不再自动提示
+     * （设置里仍能手动查看与下载）。
+     */
+    fun shouldPrompt(info: Info): Boolean =
+        ::prefs.isInitialized && prefs.getString("skippedVersion", null) != info.version && prompted != info.version
+
+    /** 本次运行中已经自动提示过的版本 */
+    private var prompted: String? = null
+
+    fun markPrompted(info: Info) { prompted = info.version }
+
+    fun skip(info: Info) {
+        prompted = info.version
+        if (::prefs.isInitialized) prefs.edit().putString("skippedVersion", info.version).apply()
+    }
+
     /** 启动后静默检查一次，有新版本再提示 */
     fun checkQuietly() {
         if (checking || available != null) return
-        scope.launch { runCatching { check() } }
+        scope.launch { runCatching { check(force = false) } }
     }
+
+    /** 是否是正在或等待安装的本应用安装包 */
+    fun isPendingUpdate(filename: String): Boolean =
+        ::prefs.isInitialized && prefs.getString("pendingFile", null) == filename
 
     /** 下载并安装；完成后调用方负责触发安装 */
     fun download(info: Info) {
@@ -100,6 +121,7 @@ object Update {
             filename = info.assetName,
             isPrivate = false,
             mimeType = "application/vnd.android.package-archive",
+            isAppUpdate = true,
         )
     }
 

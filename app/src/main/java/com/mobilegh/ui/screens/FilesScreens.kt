@@ -1,6 +1,9 @@
 package com.mobilegh.ui.screens
 
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
+import com.mobilegh.ui.components.verticalScrollWithBar
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -62,6 +65,8 @@ import com.mobilegh.ui.components.Avatar
 import com.mobilegh.ui.components.ErrorState
 import com.mobilegh.ui.components.Chips
 import com.mobilegh.ui.components.CodeView
+import com.mobilegh.ui.components.SearchMatch
+import com.mobilegh.ui.components.findSearchMatches
 import com.mobilegh.ui.components.EmptyState
 import com.mobilegh.ui.components.emptyItem
 import com.mobilegh.ui.components.GhButton
@@ -72,6 +77,7 @@ import com.mobilegh.ui.components.MenuAction
 import com.mobilegh.ui.components.MoreMenu
 import com.mobilegh.ui.components.Oc
 import com.mobilegh.ui.components.OcButton
+import com.mobilegh.ui.components.ExternalLinkDialog
 import com.mobilegh.ui.components.Page
 import com.mobilegh.ui.components.Pill
 import com.mobilegh.ui.components.ZoomImage
@@ -135,7 +141,7 @@ fun FilesScreen(owner: String, name: String, path: String, ref: String?) {
             val base = upIdx + if (hasUp) 1 else 0
             fun box(i: Int) = Modifier.groupItem(i == 0, i == total - 1, g.border, if (i == 0 && hasLast) g.canvasSubtle else g.canvas)
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp)) {
+            ScrollbarLazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp)) {
                 last.data?.let { c ->
                     item {
                         Row(
@@ -164,7 +170,7 @@ fun FilesScreen(owner: String, name: String, path: String, ref: String?) {
                         box(base + idx).fillMaxWidth().clickable {
                             when (c.type) {
                                 "dir" -> nav.push(Screen.Files(owner, name, c.path, ref))
-                                "submodule" -> c.htmlUrl?.let { u -> com.mobilegh.nav.Links.route(u)?.let(nav::pushLink) ?: ctx.openBrowser(u) }
+                                "submodule" -> c.htmlUrl?.let { u -> com.mobilegh.nav.Links.route(u)?.let(nav::pushLink) ?: ExternalLinkDialog.show(u, c.name) }
                                 else -> nav.push(Screen.FileView(owner, name, c.path, ref))
                             }
                         }.padding(horizontal = 12.dp, vertical = 12.dp),
@@ -235,6 +241,9 @@ fun FileViewScreen(owner: String, name: String, path: String, ref: String?, line
     // 当前高亮并滚动到的行：来自链接里的 #L 锚点，或「跳到行」；每次定位都是新对象
     var focus by remember(lines) { mutableStateOf(lines?.let { LineFocus(it) }) }
     var jumpOpen by remember { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var currentMatchIndex by rememberSaveable { mutableIntStateOf(0) }
     val source = rememberLoader("src:$mdSource:${g.dark}") { force ->
         if (!mdSource) null else GitHub.fileRaw(owner, name, path, ref, force).let { t -> t to withContext(Dispatchers.Default) { highlightLines(t, "x.txt", sc) } }
     }
@@ -255,36 +264,129 @@ fun FileViewScreen(owner: String, name: String, path: String, ref: String?, line
         fileName, subtitle = "${ref ?: tr("默认分支")} · $path",
         actions = {
             val b = body.data
-            // 没有推送权限时编辑页只能提示去网页 Fork，不如直接不给入口（与「删除文件」一致）
             val editable = canPush && ((b is FileBody.Code && b.text.length <= RepoWrite.MAX_EDIT_BYTES) || b is FileBody.Html)
-            // Markdown 的渲染与源码切换直接放在右上角：渲染时显示「源码」图标，源码时显示「渲染」图标
-            if (b is FileBody.Html) OcButton(
-                if (mdSource) R.drawable.oc_book else R.drawable.oc_code,
-                { mdSource = !mdSource },
-                description = if (mdSource) tr("查看渲染") else tr("查看源码"),
-            )
-            if (editable) OcButton(R.drawable.oc_pencil, { nav.push(Screen.EditFile(owner, name, ref, path)) })
+
+            // 1. 搜索按钮（代码与 Markdown 源码/渲染均支持全文检索）
+            if (b is FileBody.Code || b is FileBody.Html) {
+                OcButton(
+                    R.drawable.oc_search,
+                    {
+                        searchOpen = !searchOpen
+                        if (searchOpen && b is FileBody.Html && !mdSource) {
+                            mdSource = true
+                        }
+                    },
+                    tint = if (searchOpen) g.accent else g.fg,
+                    description = tr("在文件内搜索"),
+                )
+            }
+
+            // 2. 原始 / 渲染视图切换：直接置于右上角，点击在原本渲染与原始源码间来回切换
+            if (b is FileBody.Html) {
+                OcButton(
+                    if (mdSource) R.drawable.oc_book else R.drawable.oc_code,
+                    { mdSource = !mdSource },
+                    tint = if (mdSource) g.accent else g.fg,
+                    description = if (mdSource) tr("查看渲染") else tr("查看原始源码"),
+                )
+            }
+
+            // 3. 自动换行开关：使用专用的文本换行图标，高亮表示开启，无误导性对勾
+            if (b is FileBody.Code || (b is FileBody.Html && mdSource)) {
+                OcButton(
+                    R.drawable.oc_wrap_text,
+                    { Session.toggleWrap() },
+                    tint = if (Session.codeWrap) g.accent else g.fgMuted,
+                    description = if (Session.codeWrap) tr("自动换行（已开启）") else tr("自动换行（已关闭）"),
+                )
+            }
+
+            // 4. 编辑文件
+            if (editable) OcButton(R.drawable.oc_pencil, { nav.push(Screen.EditFile(owner, name, ref, path)) }, description = tr("编辑文件"))
+
+            // 5. 更多操作
             MoreMenu(buildList {
-                if (editable) add(MenuAction(tr("编辑文件")) { nav.push(Screen.EditFile(owner, name, ref, path)) })
-                if (b is FileBody.Code) add(MenuAction(tr("复制全部内容")) { ctx.copy(b.text) })
-                if (b is FileBody.Code) add(MenuAction(tr("跳到行…")) { jumpOpen = true })
-                add(MenuAction(if (Session.codeWrap) tr("关闭自动换行") else tr("自动换行")) { Session.toggleWrap() })
-                // 代码、图片、Markdown 以前都没有下载入口（只有二进制页有按钮），现在统一放到「更多」
-                if (downloadReady) add(MenuAction(tr("下载")) {
+                add(MenuAction(trf("打开仓库 {0}", "$owner/$name"), icon = R.drawable.oc_repo) { nav.push(Screen.Repo(owner, name)) })
+                if (b is FileBody.Code || b is FileBody.Html) {
+                    add(MenuAction(tr("在文件内搜索"), icon = R.drawable.oc_search) {
+                        searchOpen = true
+                        if (b is FileBody.Html && !mdSource) mdSource = true
+                    })
+                }
+                if (b is FileBody.Html) {
+                    add(MenuAction(if (mdSource) tr("查看渲染") else tr("查看原始源码"), icon = if (mdSource) R.drawable.oc_book else R.drawable.oc_code) {
+                        mdSource = !mdSource
+                    })
+                }
+                if (b is FileBody.Code || (b is FileBody.Html && mdSource)) {
+                    add(MenuAction(
+                        if (Session.codeWrap) tr("自动换行（已开启）") else tr("自动换行（已关闭）"),
+                        icon = R.drawable.oc_wrap_text,
+                    ) {
+                        Session.toggleWrap()
+                    })
+                }
+                if (editable) add(MenuAction(tr("编辑文件"), icon = R.drawable.oc_pencil) { nav.push(Screen.EditFile(owner, name, ref, path)) })
+                if (b is FileBody.Code) {
+                    add(MenuAction(tr("复制全部内容"), icon = R.drawable.oc_copy) { ctx.copy(b.text) })
+                    add(MenuAction(tr("跳到行…"), icon = R.drawable.oc_arrow_down) { jumpOpen = true })
+                } else if (b is FileBody.Html && source.data != null) {
+                    add(MenuAction(tr("复制全部源码"), icon = R.drawable.oc_copy) { ctx.copy(source.data!!.first) })
+                }
+                if (downloadReady) add(MenuAction(tr("下载"), icon = R.drawable.oc_download) {
                     ctx.downloadFile(repoFileDownloadUrl(owner, name, downloadRef, path, downloadPrivate), fileName, downloadPrivate)
                 })
-                add(MenuAction(tr("文件历史")) { nav.push(Screen.Commits(owner, name, ref, path)) })
-                add(MenuAction(tr("逐行归因（Blame）")) { nav.push(Screen.Blame(owner, name, path, ref)) })
-                add(MenuAction(tr("复制路径")) { ctx.copy(path) })
+                add(MenuAction(tr("文件历史"), icon = R.drawable.oc_history) { nav.push(Screen.Commits(owner, name, ref, path)) })
+                add(MenuAction(tr("逐行归因（Blame）"), icon = R.drawable.oc_people) { nav.push(Screen.Blame(owner, name, path, ref)) })
+                add(MenuAction(tr("复制路径"), icon = R.drawable.oc_copy) { ctx.copy(path) })
                 addLinkActions(ctx, "https://github.com/$owner/$name/blob/${ref ?: "HEAD"}/$path")
-                add(MenuAction(tr("查看原始文件")) { ctx.openBrowser(if (downloadPrivate) rawWebUrl else rawUrl) })
-                if (canPush) add(MenuAction(tr("删除文件"), danger = true) { deleting = true })
+                if (canPush) add(MenuAction(tr("删除文件"), danger = true, icon = R.drawable.oc_trash) { deleting = true })
             })
         },
     ) { pad ->
         LoadBox(body, Modifier.padding(pad).fillMaxSize()) { b ->
+            val searchMatches = remember(b, source.data, mdSource, searchQuery) {
+                if (searchQuery.isBlank()) emptyList<SearchMatch>()
+                else {
+                    when {
+                        b is FileBody.Code -> findSearchMatches(b.lines, searchQuery)
+                        b is FileBody.Html && mdSource -> source.data?.second?.let { findSearchMatches(it, searchQuery) }.orEmpty()
+                        else -> emptyList()
+                    }
+                }
+            }
+            val activeMatch = remember(searchMatches, currentMatchIndex) {
+                if (searchMatches.isEmpty()) null
+                else searchMatches[currentMatchIndex.coerceIn(0, searchMatches.lastIndex)]
+            }
             when (b) {
                 is FileBody.Code -> Column(Modifier.fillMaxSize()) {
+                    if (searchOpen) {
+                        com.mobilegh.ui.components.InFileSearchBar(
+                            query = searchQuery,
+                            onQueryChange = {
+                                searchQuery = it
+                                currentMatchIndex = 0
+                            },
+                            matchCount = searchMatches.size,
+                            currentIndex = currentMatchIndex,
+                            onPrev = {
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex - 1 + searchMatches.size) % searchMatches.size
+                                }
+                            },
+                            onNext = {
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex + 1) % searchMatches.size
+                                }
+                            },
+                            onClose = {
+                                searchOpen = false
+                                searchQuery = ""
+                                currentMatchIndex = 0
+                            },
+                        )
+                    }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(trf("{0} 行 · {1}", b.lines.size, fmtSize(b.text.length.toLong())), fontSize = 12.sp, color = g.fgMuted, modifier = Modifier.weight(1f))
                         if (b.text.length > 400_000) Pill(tr("过大，仅显示前 400KB"), g.attention)
@@ -293,24 +395,63 @@ fun FileViewScreen(owner: String, name: String, path: String, ref: String?, line
                     CodeView(
                         b.lines, Session.codeWrap,
                         focus = focus,
+                        searchQuery = if (searchOpen) searchQuery else null,
+                        activeMatch = if (searchOpen) activeMatch else null,
                         // 长按行号复制带 #L 锚点的永久链接
                         onLineLongPress = { n -> ctx.copy(blobPermalink(owner, name, ref, path, n), tr("已复制带行号的链接")) },
                     )
                 }
-                is FileBody.Html -> if (mdSource) {
-                    val s = source.data
-                    when {
-                        s != null -> CodeView(s.second, Session.codeWrap)
-                        source.error != null -> ErrorState(source.error!!) { source.refresh() }
-                        else -> com.mobilegh.ui.components.Loading()
+                is FileBody.Html -> Column(Modifier.fillMaxSize()) {
+                    if (searchOpen) {
+                        com.mobilegh.ui.components.InFileSearchBar(
+                            query = searchQuery,
+                            onQueryChange = {
+                                searchQuery = it
+                                currentMatchIndex = 0
+                            },
+                            matchCount = searchMatches.size,
+                            currentIndex = currentMatchIndex,
+                            onPrev = {
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex - 1 + searchMatches.size) % searchMatches.size
+                                }
+                            },
+                            onNext = {
+                                if (searchMatches.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex + 1) % searchMatches.size
+                                }
+                            },
+                            onClose = {
+                                searchOpen = false
+                                searchQuery = ""
+                                currentMatchIndex = 0
+                            },
+                        )
                     }
-                } else {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 12.dp)) {
-                        HtmlView(b.html, baseUrl = "https://github.com/$owner/$name/blob/${ref ?: "HEAD"}/${path.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }}")
+                    if (mdSource) {
+                        val s = source.data
+                        when {
+                            s != null -> CodeView(s.second, Session.codeWrap, focus = focus, searchQuery = if (searchOpen) searchQuery else null, activeMatch = if (searchOpen) activeMatch else null)
+                            source.error != null -> ErrorState(source.error!!) { source.refresh() }
+                            else -> com.mobilegh.ui.components.Loading()
+                        }
+                    } else {
+                        val scrollState = rememberScrollState()
+                        val scope = androidx.compose.runtime.rememberCoroutineScope()
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        Column(Modifier.fillMaxSize().verticalScrollWithBar(scrollState).padding(top = 12.dp)) {
+                            HtmlView(
+                                b.html,
+                                baseUrl = "https://github.com/$owner/$name/blob/${ref ?: "HEAD"}/${path.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }}",
+                                onAnchor = { y ->
+                                    scope.launch { scrollState.animateScrollTo(with(density) { (y + 12).dp.roundToPx() }) }
+                                },
+                            )
+                        }
                     }
                 }
                 FileBody.Image -> ZoomImage(rawUrl, Modifier.fillMaxSize())
-                FileBody.Binary -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                FileBody.Binary -> Column(Modifier.fillMaxSize().verticalScrollWithBar()) {
                     EmptyState(tr("二进制文件，无法预览"), R.drawable.oc_file)
                     GhButton(
                         tr("下载到本机"), Modifier.padding(horizontal = 32.dp).fillMaxWidth(),

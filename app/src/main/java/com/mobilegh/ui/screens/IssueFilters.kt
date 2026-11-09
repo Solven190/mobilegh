@@ -1,9 +1,14 @@
 package com.mobilegh.ui.screens
 
+import com.mobilegh.nav.rememberLoader
+import androidx.compose.ui.text.style.TextOverflow
+import com.mobilegh.data.RepoWrite
+import com.mobilegh.nav.OnRepoChanged
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -356,14 +361,17 @@ fun IssueResults(query: IssueQuery, onChange: (IssueQuery) -> Unit, owner: Strin
         nav.push(Screen.IssueDetail(repo.substringBefore('/'), repo.substringAfter('/'), issue.number, issue.pullRequest != null))
     }
     val snackbar = retain("issue-results:snackbar") { SnackbarHostState() }
+    val listState = rememberLazyListState()
     Box(Modifier.fillMaxSize()) {
     when {
         q.needsSearch -> {
             val pager = rememberPager("search:${q.key()}") { p, f -> GitHub.searchIssues(q.searchQuery(), p, q.sort.field, q.sort.order, f).items }
+            // 新建、关闭、评论等写入后列表自动刷新，不用手动下拉（跨仓库的列表监听任意仓库的变化）
+            OnRepoChanged(owner ?: RepoWrite.ANY, name ?: RepoWrite.ANY, RepoWrite.ISSUES) { pager.refresh() }
             val close = rememberListCloser(pager, snackbar, key = { it.id }, message = { trf("已关闭 #{0}", it.number) }) { issue ->
                 closeFromAnywhere(issue, owner, name)
             }
-            PagedList(pager, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear, itemKey = { it.id }) { issue ->
+            PagedList(pager, state = listState, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear, itemKey = { it.id }) { issue ->
                 SwipeCloseRow(enabled = canCloseHere(issue.user?.login, issue.state), onClose = { close(issue) }) {
                     IssueItem(issue, repoName = if (q.repo == null) issue.repositoryUrl?.substringAfter("/repos/") else null) { openIssue(issue) }
                 }
@@ -373,10 +381,12 @@ fun IssueResults(query: IssueQuery, onChange: (IssueQuery) -> Unit, owner: Strin
         q.pulls -> {
             val sort = if (q.sort == IssueSort.Updated) "updated" else "created"
             val pager = rememberPager("pulls:${q.key()}") { p, f -> GitHub.pulls(owner, name, q.state.api, p, f, sort, q.sort.order ?: "desc") }
+            // 新建、关闭、评论等写入后列表自动刷新，不用手动下拉（跨仓库的列表监听任意仓库的变化）
+            OnRepoChanged(owner ?: RepoWrite.ANY, name ?: RepoWrite.ANY, RepoWrite.ISSUES) { pager.refresh() }
             val close = rememberListCloser(pager, snackbar, key = { it.id }, message = { trf("已关闭 #{0}", it.number) }) { pr ->
                 GitHub.setPullState(owner, name, pr.number, false)
             }
-            PagedList(pager, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear, itemKey = { it.id }) { pr ->
+            PagedList(pager, state = listState, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear, itemKey = { it.id }) { pr ->
                 SwipeCloseRow(enabled = canCloseHere(pr.user?.login, pr.state), onClose = { close(pr) }) {
                     PullItem(pr) { nav.push(Screen.IssueDetail(owner, name, pr.number, true)) }
                 }
@@ -384,12 +394,21 @@ fun IssueResults(query: IssueQuery, onChange: (IssueQuery) -> Unit, owner: Strin
         }
         else -> {
             val pager = rememberPager("issues:${q.key()}") { p, f -> GitHub.issues(owner, name, q.state.api, p, f, q.sort.field ?: "created", q.sort.order ?: "desc") }
+            // 新建、关闭、评论等写入后列表自动刷新，不用手动下拉（跨仓库的列表监听任意仓库的变化）
+            OnRepoChanged(owner ?: RepoWrite.ANY, name ?: RepoWrite.ANY, RepoWrite.ISSUES) { pager.refresh() }
             val close = rememberListCloser(pager, snackbar, key = { it.id }, message = { trf("已关闭 #{0}", it.number) }) { issue ->
                 GitHub.setIssueState(owner, name, issue.number, false)
             }
+            // 与网页版一致：仓库置顶的 Issue（最多 3 个）显示在列表最上面；读取失败时不显示
+            val pinned = rememberLoader("pinned-issues") { _ -> runCatching { GitHub.pinnedIssues(owner, name) }.getOrDefault(emptyList()) }
+            OnRepoChanged(owner, name, RepoWrite.ISSUES) { pinned.refresh() }
+            val pins = pinned.data.orEmpty().takeIf { !q.hasFilters && q.state != IssueStateFilter.Closed }.orEmpty()
             PagedList(
-                pager, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear,
+                pager, state = listState, empty = empty, emptyIcon = emptyIcon, emptyAction = emptyAction, onEmptyAction = clear,
                 itemFilter = { it.pullRequest == null }, itemKey = { it.id },
+                header = {
+                    if (pins.isNotEmpty()) item(key = "pinned") { PinnedIssues(pins) { n -> nav.push(Screen.IssueDetail(owner, name, n, false)) } }
+                },
             ) { i ->
                 SwipeCloseRow(enabled = canCloseHere(i.user?.login, i.state), onClose = { close(i) }) {
                     IssueItem(i) { nav.push(Screen.IssueDetail(owner, name, i.number, false)) }
@@ -398,6 +417,39 @@ fun IssueResults(query: IssueQuery, onChange: (IssueQuery) -> Unit, owner: Strin
         }
     }
     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+    }
+}
+
+/** 仓库置顶的 Issue：横向卡片，点开详情 */
+@Composable
+private fun PinnedIssues(pins: List<GitHub.PinnedIssue>, onOpen: (Int) -> Unit) {
+    val g = Gh.c
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Oc(R.drawable.oc_pin, g.fgMuted, 14.dp)
+            Spacer(Modifier.width(6.dp))
+            Text(tr("置顶的 Issue"), color = g.fgMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            pins.forEach { p ->
+                Column(
+                    Modifier.width(220.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, g.border, RoundedCornerShape(8.dp))
+                        .clickable { onOpen(p.number) }.padding(12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Oc(if (p.open) R.drawable.oc_issue_opened else R.drawable.oc_issue_closed, if (p.open) g.success else g.done, 14.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("#${p.number}", color = g.fgMuted, fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(p.title, color = g.fg, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        HDivider()
     }
 }
 

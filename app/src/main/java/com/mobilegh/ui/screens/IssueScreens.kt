@@ -1,7 +1,11 @@
 package com.mobilegh.ui.screens
 
 import com.mobilegh.ui.components.Loading
+import com.mobilegh.ui.components.verticalScrollWithBar
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import com.mobilegh.data.ContentEdits
+import com.mobilegh.data.WebSessionMissing
+import com.mobilegh.ui.components.GitHubWebLogin
 import com.mobilegh.ui.components.attachmentMarkdown
 import com.mobilegh.ui.components.insertAtCursor
 import androidx.compose.foundation.background
@@ -20,7 +24,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import com.mobilegh.ui.components.cappedFlingBehavior
+import com.mobilegh.ui.components.HtmlParser
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +40,8 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -186,7 +195,11 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
     val data = rememberLoader("thread") { f ->
         coroutineScope {
             val i = async { GitHub.issue(owner, name, number, f) }
-            val c = async { GitHub.issueComments(owner, name, number, f) }
+            // 定位到具体评论时需要全部评论；否则只取第一页，长讨论也能马上显示，后续页见 moreComments
+            val c = async {
+                if (commentId != null) GitHub.issueComments(owner, name, number, f)
+                else GitHub.issueCommentsPage(owner, name, number, 1, f)
+            }
             val p = if (isPull) async {
                 val pr = GitHub.pull(owner, name, number, f)
                 // 检查结果依赖 head 提交；读取失败（如 Token 没有 checks 权限）时只是不显示
@@ -223,7 +236,40 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
     var writing by retain("thread:writing") { mutableStateOf(false) }
     val url = "https://github.com/$owner/$name/${if (isPull) "pull" else "issues"}/$number"
     val t = data.data
+    // 第一页之后的评论：在后台逐页读取并追加，读取期间列表底部显示加载圈
+    // 随第一页一起更新：刷新或重新加载后从第二页重新读起
+    val moreComments = remember(t) { mutableStateListOf<Comment>() }
+    var moreLoading by remember { mutableStateOf(false) }
+    var moreFailed by remember { mutableStateOf(false) }
+    var moreRetry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(t, moreRetry) {
+        val th = t ?: return@LaunchedEffect
+        moreFailed = false
+        // 第一页不满一页，或已经按链接读完了全部评论：没有后续页
+        if (commentId != null || th.comments.size < GitHub.COMMENT_PAGE_SIZE) {
+            moreLoading = false
+            return@LaunchedEffect
+        }
+        moreLoading = true
+        try {
+            var page = 2 + moreComments.size / GitHub.COMMENT_PAGE_SIZE
+            while (page <= GitHub.MAX_COMMENT_PAGES) {
+                val part = GitHub.issueCommentsPage(owner, name, number, page, false)
+                moreComments += part
+                if (part.size < GitHub.COMMENT_PAGE_SIZE) break
+                page++
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            moreFailed = true
+        } finally {
+            moreLoading = false
+        }
+    }
     val repo = rememberLoader("repo") { GitHub.repo(owner, name, it) }
+    // Issue 是否已置顶到仓库（PR 不能置顶）；读取失败时不显示置顶操作
+    val pinned = rememberLoader("issue-pinned") { _ -> if (isPull) null else runCatching { GitHub.issuePinned(owner, name, number) }.getOrNull() }
     val access = ThreadAccess.of(repo.data?.permissions, repo.data?.archived == true, t?.issue?.user?.login, Session.login)
     // 插入到光标处；视频用原生播放器的链接形式，图片保持 GitHub 的 Markdown 图语法（与新建 Issue 共用）
     val attachLauncher = rememberCommentAttachments(repo?.data?.id) { url, alt ->
@@ -289,8 +335,13 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
             MoreMenu(buildList {
                 if (t != null) {
                     val open = t.issue.state == "open"
+                    val isLocked = t.issue.locked
                     if (isPull) {
                         val pr = t.pull
+                        val isMerged = pr?.merged == true
+                        val headMissing = pr != null && pr.head.repo == null
+                        val canReopen = access.canReopen(isLocked, isMerged || headMissing)
+                        val canClose = access.canClose(isLocked, isMerged)
                         if (open && pr != null && !pr.merged) {
                             if (pr.draft) { if (access.toggleDraft) add(MenuAction(tr("标记为可评审")) { setDraft(false) }) }
                             else if (access.merge) add(MenuAction(tr("合并 Pull Request…")) { mergeDialog = true })
@@ -307,13 +358,15 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
                             if (!access.author) add(MenuAction(tr("提交审查…")) { reviewDialog = true })
                             if (access.editMeta) add(MenuAction(tr("请求审查…")) { metaKind = "reviewers" })
                             if (!pr.draft && access.toggleDraft) add(MenuAction(tr("转为草稿")) { setDraft(true) })
-                            if (access.changeState) add(MenuAction(tr("关闭 Pull Request"), danger = true) {
-                                stateChange = StateChange(
-                                    tr("关闭 Pull Request？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true,
-                                ) { GitHub.setPullState(owner, name, number, false) }
-                            })
-                        } else if (pr != null && !pr.merged && access.changeState) {
-                            add(MenuAction(tr("重新开启")) {
+                            if (access.changeState) {
+                                add(MenuAction(tr("关闭 Pull Request"), danger = true, enabled = canClose) {
+                                    stateChange = StateChange(
+                                        tr("关闭 Pull Request？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true,
+                                    ) { GitHub.setPullState(owner, name, number, false) }
+                                })
+                            }
+                        } else if (pr != null) {
+                            add(MenuAction(tr("重新开启"), enabled = canReopen) {
                                 stateChange = StateChange(tr("重新开启 Pull Request？"), tr("重新开启"), tr("重新开启后会再次出现在开放列表中。"), danger = false) {
                                     GitHub.setPullState(owner, name, number, true)
                                 }
@@ -321,26 +374,64 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
                         }
                         add(MenuAction(tr("查看文件变更")) { nav.push(Screen.PullFiles(owner, name, number)) })
                         add(MenuAction(tr("复制检出命令")) { ctx.copy(prCheckoutCommand(number), tr("检出命令已复制")) })
-                    } else if (access.changeState) {
+                    } else {
+                        // 置顶到仓库 Issue 列表顶部（网页版的 Pin issue），需要写权限
+                        val isPinned = pinned.data
+                        val nodeId = t.issue.nodeId
+                        if (access.write && isPinned != null && nodeId != null) {
+                            add(MenuAction(if (isPinned) tr("取消置顶") else tr("置顶到仓库")) {
+                                write(onSuccess = {
+                                    pinned.accept(!isPinned)
+                                    ctx.toast(if (isPinned) tr("已取消置顶") else tr("已置顶到仓库 Issue 列表顶部"))
+                                }) { GitHub.setIssuePinned(owner, name, nodeId, !isPinned) }
+                            })
+                        }
+                        val canReopen = access.canReopen(
+                            locked = isLocked,
+                            stateReason = t.issue.stateReason,
+                            closedByLogin = t.issue.closedBy?.login,
+                            me = Session.login,
+                        )
+                        val canClose = access.canClose(isLocked)
                         if (open) {
-                            add(MenuAction(tr("关闭（已完成）")) {
-                                stateChange = StateChange(tr("关闭 Issue？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true) {
-                                    GitHub.setIssueState(owner, name, number, false, "completed")
-                                }
-                            })
-                            add(MenuAction(tr("关闭（不计划）")) {
-                                stateChange = StateChange(tr("关闭 Issue？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true) {
-                                    GitHub.setIssueState(owner, name, number, false, "not_planned")
-                                }
-                            })
+                            if (access.changeState) {
+                                add(MenuAction(tr("关闭（已完成）"), danger = true, enabled = canClose) {
+                                    stateChange = StateChange(tr("关闭 Issue？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true) {
+                                        GitHub.setIssueState(owner, name, number, false, "completed")
+                                    }
+                                })
+                                add(MenuAction(tr("关闭（不计划）"), danger = true, enabled = canClose) {
+                                    stateChange = StateChange(tr("关闭 Issue？"), tr("关闭"), tr("关闭后仍可在网页或 App 中重新开启。"), danger = true) {
+                                        GitHub.setIssueState(owner, name, number, false, "not_planned")
+                                    }
+                                })
+                            }
                         } else {
-                            add(MenuAction(tr("重新开启")) {
+                            add(MenuAction(tr("重新开启"), enabled = canReopen) {
                                 stateChange = StateChange(tr("重新开启 Issue？"), tr("重新开启"), tr("重新开启后会再次出现在开放列表中。"), danger = false) {
                                     GitHub.setIssueState(owner, name, number, true, "reopened")
                                 }
                             })
                         }
                     }
+                }
+                if (t != null) {
+                    val savedId = "issue:$owner/$name#$number"
+                    val isSaved = com.mobilegh.data.SavedItems.isSaved(savedId)
+                    add(MenuAction(if (isSaved) tr("移出稍后阅读") else tr("保存到稍后阅读")) {
+                        com.mobilegh.data.SavedItems.toggle(
+                            com.mobilegh.data.SavedItem(
+                                id = savedId,
+                                kind = if (isPull) com.mobilegh.data.SavedKind.PullRequest else com.mobilegh.data.SavedKind.Issue,
+                                owner = owner,
+                                name = name,
+                                number = number,
+                                title = t.issue.title,
+                                state = t.issue.state,
+                            )
+                        )
+                        ctx.toast(if (isSaved) tr("已移出稍后阅读") else tr("已保存到稍后阅读"))
+                    })
                 }
                 add(MenuAction(tr("复制链接")) { ctx.copy(url) })
                 add(MenuAction(tr("分享")) { ctx.share(url) })
@@ -385,16 +476,27 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
 
     ) { pad ->
         LoadBox(data, Modifier.padding(pad).fillMaxSize()) { th ->
+            // 第一页与后台追加的后续页合并；按 id 去重（读取期间有评论被删除时，后一页会重复出现前一页的最后一条）
+            val comments = remember(th.comments, moreComments.size) { (th.comments + moreComments).distinctBy { it.id } }
+            // 评论与审查按时间排好；只在两者变化时重新排序，不在每次重组时都排一遍
+            val timelineEntries = remember(comments, th.reviews) {
+                (comments.map { it.createdAt to it as Any } + th.reviews.filter { it.state != "PENDING" }.map { it.submittedAt to it as Any })
+                    .sortedBy { it.first ?: "" }
+            }
+            // 在后台线程预先解析正文，滑动时评论直接取解析结果，不在主线程上解析 HTML
+            LaunchedEffect(comments) {
+                HtmlParser.prewarm(listOfNotNull(th.issue.bodyHtml ?: th.pull?.bodyHtml) + comments.mapNotNull { it.bodyHtml }, "https://github.com/$owner/$name/")
+            }
             // 从 #issuecomment-N 链接进来：评论加载后滚动到它。
             // 列表项顺序固定为：标题、元数据、（Issue 才有的）相关议题、间距、正文，之后才是按时间排好的评论与审查
             val anchorIndex = commentId?.let { id ->
                 val before = 4 + if (!isPull && related.data != null) 1 else 0
-                val timeline = (th.comments.map { it.createdAt to it as Any } + th.reviews.filter { it.state != "PENDING" }.map { it.submittedAt to it as Any })
+                val timeline = (comments.map { it.createdAt to it as Any } + th.reviews.filter { it.state != "PENDING" }.map { it.submittedAt to it as Any })
                     .sortedBy { it.first ?: "" }
                 timeline.indexOfFirst { val e = it.second; (e as? Comment)?.id == id || (e as? Review)?.id == id }.takeIf { it >= 0 }?.let { before + it }
             }
             LaunchedEffect(anchorIndex) { anchorIndex?.let { listState.animateScrollToItem(it) } }
-            LazyColumn(Modifier.fillMaxSize(), state = listState, flingBehavior = cappedFlingBehavior()) {
+            ScrollbarLazyColumn(Modifier.fillMaxSize(), state = listState) {
                 item {
                     ThreadHeader(
                         owner, name, th,
@@ -442,8 +544,7 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
                         ReactionBar(th.issue.reactions) { GitHub.toggleReaction(owner, name, number, null, it) }
                     }
                 }
-                val entries = (th.comments.map { it.createdAt to it as Any } + th.reviews.filter { it.state != "PENDING" }.map { it.submittedAt to it as Any })
-                    .sortedBy { it.first ?: "" }
+                val entries = timelineEntries
                 items(entries.size, key = { i ->
                     when (val e = entries[i].second) {
                         is Comment -> "c${e.id}"
@@ -486,6 +587,23 @@ fun IssueDetailScreen(owner: String, name: String, number: Int, isPull: Boolean,
                                 Avatar(e.user?.avatarUrl, 20.dp, Modifier.clickable { e.user?.let { nav.push(Screen.Profile(it.login)) } })
                                 Spacer(Modifier.width(6.dp))
                                 Text("${e.user?.login ?: ""} $label · ${relTime(e.submittedAt)}", fontSize = 13.sp, color = g.fgMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+                // 后续页还在读取：底部显示加载圈；读取失败时点按重试
+                if (moreLoading || moreFailed) {
+                    item(key = "more-comments") {
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .then(if (moreFailed) Modifier.clickable { moreRetry++ } else Modifier)
+                                .padding(vertical = 20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (moreFailed) {
+                                Text(tr("更多评论加载失败，点按重试"), fontSize = 13.sp, color = g.fgMuted)
+                            } else {
+                                CircularProgressIndicator(Modifier.size(24.dp), color = g.fgMuted, strokeWidth = 2.dp)
                             }
                         }
                     }
@@ -750,7 +868,7 @@ private fun RelatedIssuePicker(
                 searching -> Text(tr("搜索中…"), fontSize = 13.sp, color = g.fgMuted)
                 found == null -> Text(tr("输入关键词后点「搜索」，留空列出全部"), fontSize = 13.sp, color = g.fgMuted)
                 found.isEmpty() -> Text(tr("没有可添加的 Issue"), fontSize = 13.sp, color = g.fgMuted)
-                else -> LazyColumn(Modifier.heightIn(max = 340.dp)) {
+                else -> ScrollbarLazyColumn(Modifier.heightIn(max = 340.dp)) {
                     items(found, key = { it.id }) { issue ->
                         val open = issue.state == "open"
                         Row(
@@ -895,7 +1013,7 @@ private fun MergeDialog(pr: Pull, busy: Boolean, onDismiss: () -> Unit, onMerge:
         confirmEnabled = !busy && (method == "rebase" || title.isNotBlank()),
         onConfirm = { onMerge(MergeRequest(method, if (method == "rebase") "" else title.trim(), if (method == "rebase") "" else message, deleteBranch && canDelete)) },
     ) {
-        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+        Column(Modifier.heightIn(max = 480.dp).verticalScrollWithBar()) {
             listOf("merge" to tr("创建合并提交"), "squash" to tr("压缩合并（Squash）"), "rebase" to tr("变基合并（Rebase）")).forEach { (k, v) ->
                 RadioRow(method == k, v, enabled = !busy) {
                     method = k
@@ -998,21 +1116,98 @@ private fun ReviewDialog(
 @Composable
 private fun EditHistoryDialog(nodeId: String, title: String, onDismiss: () -> Unit) {
     val g = Gh.c
+    val scope = rememberCoroutineScope()
     var result by remember(nodeId) { mutableStateOf<Result<List<ContentEdits.Revision>>?>(null) }
+    var pendingDelete by remember { mutableStateOf<ContentEdits.Revision?>(null) }
+    var deleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(nodeId) { result = runCatching { ContentEdits.load(nodeId) } }
     val loaded = result
+
+    pendingDelete?.let { target ->
+        GhDialog(
+            title = tr("删除历史版本？"),
+            onDismiss = { if (!deleting) pendingDelete = null },
+            confirm = if (deleting) tr("删除中…") else tr("删除"),
+            danger = true,
+            confirmEnabled = !deleting,
+            onConfirm = {
+                deleting = true
+                deleteError = null
+                scope.launch {
+                    try {
+                        ContentEdits.delete(target.id)
+                        pendingDelete = null
+                        result = runCatching { ContentEdits.load(nodeId) }
+                    } catch (e: WebSessionMissing) {
+                        pendingDelete = null
+                        GitHubWebLogin.request(tr("登录 GitHub（用于删除历史版本）")) {
+                            scope.launch {
+                                runCatching { ContentEdits.delete(target.id) }
+                                result = runCatching { ContentEdits.load(nodeId) }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        deleteError = e.message ?: tr("删除失败")
+                    } finally {
+                        deleting = false
+                    }
+                }
+            },
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Text(tr("删除后该版本的正文记录将被永久清除，但编辑者与时间仍会保留。此操作无法撤销。"), fontSize = 13.sp, color = g.fg)
+                deleteError?.let { err ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(err, fontSize = 12.sp, color = g.danger)
+                }
+            }
+        }
+    }
+
     GhDialog(title, onDismiss, confirm = tr("关闭"), onConfirm = onDismiss) {
         when {
             loaded == null -> Loading(Modifier.fillMaxWidth().heightIn(min = 80.dp))
             loaded.isFailure -> Text(loaded.exceptionOrNull()?.message ?: tr("加载失败"), fontSize = 13.sp, color = g.danger)
             loaded.getOrNull().isNullOrEmpty() -> Text(tr("没有编辑记录"), fontSize = 13.sp, color = g.fgMuted)
-            else -> Column(Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
-                loaded.getOrThrow().forEachIndexed { i, r ->
+            else -> Column(Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScrollWithBar()) {
+                val list = loaded.getOrThrow()
+                list.forEachIndexed { i, r ->
                     if (i > 0) HDivider()
                     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                        Text(trf("{0} 编辑于 {1}", r.editor ?: "—", relTime(r.createdAt)), fontSize = 12.sp, color = g.fgMuted)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val timeText = when {
+                                r.isDeleted -> trf("{0} 编辑于 {1}（已删除）", r.editor ?: "—", relTime(r.createdAt))
+                                i == 0 -> trf("{0} 编辑于 {1} · 最新", r.editor ?: "—", relTime(r.createdAt))
+                                else -> trf("{0} 编辑于 {1}", r.editor ?: "—", relTime(r.createdAt))
+                            }
+                            Text(timeText, fontSize = 12.sp, color = g.fgMuted)
+
+                            if (!r.isDeleted && i > 0 && r.id.isNotBlank() && (r.editor.isNullOrBlank() || r.editor.equals(Session.login, ignoreCase = true))) {
+                                Text(
+                                    tr("删除此版本"),
+                                    Modifier.clickable { pendingDelete = r }.padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
+                                    fontSize = 12.sp,
+                                    color = g.danger,
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(4.dp))
-                        MdText(r.body.orEmpty(), fontSize = 14.sp, lineHeight = 20.sp, color = g.fg)
+                        if (r.isDeleted) {
+                            Text(
+                                tr("此历史版本的正文内容已被删除"),
+                                fontSize = 13.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = g.fgMuted,
+                            )
+                        } else {
+                            MdText(r.body.orEmpty(), fontSize = 14.sp, lineHeight = 20.sp, color = g.fg)
+                        }
                     }
                 }
             }

@@ -1,6 +1,7 @@
 package com.mobilegh.ui.components
 
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.mobilegh.data.ImageFetch
+import com.mobilegh.data.ImageContent
 import com.mobilegh.ui.theme.Gh
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -76,23 +79,132 @@ object Images {
         val mine = CompletableDeferred<ImageBitmap?>()
         val running = synchronized(decoding) { decoding.getOrPut(memKey) { mine } }
         if (running !== mine) return running.await()
-        try {
+        return try {
             val bmp = withContext(Dispatchers.IO) {
                 val r = ImageFetch.fetch(url) ?: return@withContext null
                 decode(r.bytes, maxDim)?.also { if (memKey == key(url, maxDim)) mem.put(memKey, it) }
             }
             mine.complete(bmp)
-            return bmp
+            bmp
         } catch (t: Throwable) {
             mine.complete(null)
-            throw t
+            null
         } finally {
             synchronized(decoding) { decoding.remove(memKey) }
         }
     }
 
+    /** SVG 渲染的放大倍数：徽章等矢量图按 3 倍像素栅格化，在高密度屏上保持清晰；逻辑尺寸 = 位图尺寸 / 倍数 */
+    internal const val SVG_SCALE = 3f
+
+    /** 由 SVG 栅格化得到的位图 → 它的放大倍数；普通位图不在表里（视为 1 倍）。弱引用，位图被回收后自动清除 */
+    private val svgScales = java.util.WeakHashMap<ImageBitmap, Float>()
+
+    /** 位图相对「逻辑像素（dp）」的倍数：SVG 位图是 [SVG_SCALE]，普通图片按原始像素显示时为 1 */
+    fun scaleOf(bitmap: ImageBitmap): Float = synchronized(svgScales) { svgScales[bitmap] } ?: 1f
+
+    /** 把 SVG 画成位图；解析失败返回 null。文档没有声明尺寸时用 viewBox，再不行取 300×150（浏览器的默认值） */
+    internal fun decodeSvg(bytes: ByteArray, maxDim: Int): ImageBitmap? = try {
+        com.caverock.androidsvg.SVG.registerExternalFileResolver(SvgFileResolver)
+        val svg = com.caverock.androidsvg.SVG.getFromInputStream(java.io.ByteArrayInputStream(bytes))
+        var w = svg.documentWidth
+        var h = svg.documentHeight
+        if (w <= 0f || h <= 0f) {
+            val box = svg.documentViewBox
+            if (box != null && box.width() > 0f && box.height() > 0f) { w = box.width(); h = box.height() } else { w = 300f; h = 150f }
+        }
+        val scale = minOf(SVG_SCALE, maxDim / maxOf(w, h)).coerceAtLeast(0.1f)
+        val bmp = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        // 很多徽章 SVG 没有写 viewBox：不补上的话，放大文档尺寸时内容不会跟着放大，只会缩在左上角
+        if (svg.documentViewBox == null) svg.setDocumentViewBox(0f, 0f, w, h)
+        svg.setDocumentWidth(w * scale)
+        svg.setDocumentHeight(h * scale)
+        svg.renderToCanvas(android.graphics.Canvas(bmp))
+        bmp.asImageBitmap().also { synchronized(svgScales) { svgScales[it] = scale } }
+    } catch (e: Exception) {
+        null
+    } catch (e: OutOfMemoryError) {
+        null
+    }
+
+    /** 处理 SVG 内部 <image> 元素（如 Shields.io 徽章内嵌的 base64 矢量 logo） */
+    private object SvgFileResolver : com.caverock.androidsvg.SVGExternalFileResolver() {
+        private val depth = ThreadLocal.withInitial { 0 }
+
+        override fun resolveImage(filename: String?): Bitmap? {
+            if (filename.isNullOrBlank()) return null
+            val currentDepth = depth.get() ?: 0
+            if (currentDepth >= 3) return null
+            depth.set(currentDepth + 1)
+            return try {
+                resolveInternal(filename)
+            } catch (_: Throwable) {
+                null
+            } finally {
+                depth.set(currentDepth)
+            }
+        }
+
+        private fun resolveInternal(filename: String): Bitmap? {
+            // 1. Data URI (徽章内嵌 SVG/PNG 矢量/位图图标)
+            if (filename.startsWith("data:", ignoreCase = true)) {
+                val parsed = ImageContent.parseDataUri(filename) ?: return null
+                return if (parsed.isSvg) {
+                    renderEmbeddedSvg(parsed.bytes)
+                } else {
+                    BitmapFactory.decodeByteArray(parsed.bytes, 0, parsed.bytes.size)
+                }
+            }
+            // 2. 外部 HTTP/HTTPS 图片引用
+            if (filename.startsWith("http://", ignoreCase = true) || filename.startsWith("https://", ignoreCase = true)) {
+                cached(filename, 512)?.let { return it.asAndroidBitmap() }
+                val fetched = ImageFetch.cached(filename) ?: ImageFetch.fetch(filename)
+                val bytes = fetched?.bytes ?: return null
+                return if (ImageContent.mimeOf(filename, bytes) == "image/svg+xml") {
+                    renderEmbeddedSvg(bytes)
+                } else {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+            }
+            return null
+        }
+
+        private fun renderEmbeddedSvg(bytes: ByteArray): Bitmap? = try {
+            val svg = com.caverock.androidsvg.SVG.getFromInputStream(java.io.ByteArrayInputStream(bytes))
+            var w = svg.documentWidth
+            var h = svg.documentHeight
+            if (w <= 0f || w.isNaN() || h <= 0f || h.isNaN()) {
+                val box = svg.documentViewBox
+                if (box != null && box.width() > 0f && box.height() > 0f) {
+                    w = box.width()
+                    h = box.height()
+                } else {
+                    w = 48f
+                    h = 48f
+                }
+            }
+            val maxSide = maxOf(w, h).coerceAtLeast(1f)
+            val scale = (72f / maxSide).coerceIn(1f, 4f)
+            val bw = (w * scale).toInt().coerceAtLeast(1)
+            val bh = (h * scale).toInt().coerceAtLeast(1)
+            val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            if (svg.documentViewBox == null) svg.setDocumentViewBox(0f, 0f, w, h)
+            svg.setDocumentWidth(bw.toFloat())
+            svg.setDocumentHeight(bh.toFloat())
+            svg.renderToCanvas(android.graphics.Canvas(bmp))
+            bmp
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     /** 采样解码，避免大图直接撑爆内存 */
-    fun decode(bytes: ByteArray, maxDim: Int): ImageBitmap? = try {
+    fun decode(bytes: ByteArray, maxDim: Int): ImageBitmap? {
+        if (ImageContent.mimeOf("", bytes) == "image/svg+xml") return decodeSvg(bytes, maxDim)
+        return decodeRaster(bytes, maxDim)
+    }
+
+    private fun decodeRaster(bytes: ByteArray, maxDim: Int): ImageBitmap? = try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
@@ -123,9 +235,12 @@ fun NetImage(
     placeholder: Boolean = true,
     /** 读屏描述。为空时不挂语义，和原来一样；挂在外层容器上，加载完成前也能读到 */
     contentDescription: String? = null,
+    /** 已知目标采样边长；传入时首帧直接触发加载，不用等待 onSizeChanged 布局回调，消除首帧空白延迟 */
+    targetDim: Int? = null,
 ) {
     var size by remember { mutableStateOf(IntSize.Zero) }
-    val maxDim = maxOf(size.width, size.height).takeIf { it > 0 }?.coerceIn(64, 2048)
+    val initialDim = targetDim?.coerceIn(64, 2048)
+    val maxDim = initialDim ?: maxOf(size.width, size.height).takeIf { it > 0 }?.coerceIn(64, 2048)
     val requestUrl = url?.takeIf { it.isNotBlank() }
     val requestKey = requestUrl?.let { ImageFetch.cacheKey(it) }
     // produceState 的 key 只重启协程，不会重置已记住的 value；换 URL 时必须另建状态。
@@ -139,7 +254,7 @@ fun NetImage(
     }
     val desc = contentDescription
     val semanticsModifier = if (desc != null) Modifier.semantics { this.contentDescription = desc } else Modifier
-    Box(modifier.onSizeChanged { size = it }.then(semanticsModifier)) {
+    Box(modifier.onSizeChanged { if (targetDim == null) size = it }.then(semanticsModifier)) {
         Box(if (placeholder && bmp == null) Modifier.matchParentSize().background(Gh.c.neutralMuted) else Modifier.matchParentSize()) {
             bmp?.let { Image(it, null, Modifier.matchParentSize(), contentScale = contentScale) }
         }
@@ -154,6 +269,7 @@ fun Avatar(url: String?, size: Dp, modifier: Modifier = Modifier, square: Boolea
         url?.takeIf { it.isNotBlank() }?.let { sizedAvatar(it, px) },
         modifier.size(size).clip(shape).border(1.dp, Gh.c.borderMuted, shape),
         contentDescription = contentDescription,
+        targetDim = px,
     )
 }
 

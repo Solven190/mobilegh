@@ -1,6 +1,8 @@
 package com.mobilegh.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -87,7 +90,13 @@ import com.mobilegh.i18n.trf
  * 免得一个 Composable 把「加载 + 搜索 + 排序 + 翻页 + 增删」全揽在自己身上。
  */
 @Composable
-internal fun StarredRepoPage(login: String, name: String) {
+fun StarTab() {
+    val login = Session.login ?: return
+    StarredRepoPage(login, "", isRootTab = true)
+}
+
+@Composable
+internal fun StarredRepoPage(login: String, name: String, isRootTab: Boolean = false) {
     val isMe = login.equals(Session.login, true)
     val signedIn = Session.token != null
     // 列表是 Star 的子集，网页版也放在 Stars 页；别人的公开列表可以看，但只有本人能新建
@@ -106,12 +115,13 @@ internal fun StarredRepoPage(login: String, name: String) {
     androidx.activity.compose.BackHandler(enabled = inDetail) { selectedList = null }
     Page(
         starredTitle(listsTab, selectedList, lists?.data), subtitle = subtitle,
+        back = if (isRootTab) inDetail else true,
         onBack = if (inDetail) ({ selectedList = null }) else null,
     ) { pad ->
         Column(Modifier.padding(pad)) {
             // 进入某个列表后不再显示「全部 Star / 列表」页签，只有标题栏的返回，界面更干净
             if (signedIn && !inDetail) {
-                Segmented(
+                com.mobilegh.ui.components.Segmented(
                     listOf(tr("全部 Star"), tr("列表")), tab,
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 ) { index ->
@@ -159,8 +169,11 @@ private fun StarFeedTab(login: String, isMe: Boolean) {
         onPick = { picked -> index = picked; descending = STAR_SORTS[picked].descending },
         onFlip = { descending = !descending },
     )
+    val state = rememberLazyListState()
     PagedList(
         pager,
+        state = state,
+        itemKey = { it.id },
         empty = starFeedEmpty(login, isMe, query),
         emptyIcon = R.drawable.oc_star,
         filteredEmpty = tr("已加载的 Star 中没有匹配的仓库"),
@@ -464,7 +477,7 @@ private fun StarListRows(
                 tr("没有匹配的列表"), R.drawable.oc_checklist, Modifier.fillMaxSize(), tr("清除搜索"), onClearSearch,
             )
         }
-        else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
+        else -> ScrollbarLazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
             item(contentType = "controls") { header() }
             items(shown, key = { it.id }) { list -> StarListRow(list) { onOpen(list.id) } }
         }
@@ -480,7 +493,16 @@ internal fun StarListRow(list: GitHubStarList, enabled: Boolean = true, onClick:
 @Composable
 internal fun StarListCard(name: String, description: String, count: Int, isPrivate: Boolean, updatedAt: String = "", enabled: Boolean = true, onClick: () -> Unit) {
     val g = Gh.c
-    Card(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).clickable(enabled = enabled, onClick = onClick)) {
+    Card(
+        Modifier
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            )
+    ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconBadge(
                 if (isPrivate) R.drawable.oc_lock else R.drawable.oc_checklist,
@@ -571,8 +593,11 @@ private fun StarListDetail(
         Text(it, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = Gh.c.danger, fontSize = 12.sp)
     }
     // 倒序的每页在数据层已经倒着放好，这里不再反转，只做搜索过滤
+    val state = rememberLazyListState()
     PagedList(
         pager,
+        state = state,
+        itemKey = { it.id },
         autoLoad = autoPageStarFeed(query, searching = false),
         empty = tr("列表暂无仓库，在仓库页「加入自定义列表」中添加"),
         emptyIcon = R.drawable.oc_checklist,

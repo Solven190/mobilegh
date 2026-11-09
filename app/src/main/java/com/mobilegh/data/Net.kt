@@ -47,29 +47,41 @@ object Net {
     private val JSD = CdnNode("jsd", "jsDelivr", NodeType.JsDelivr, "https://cdn.jsdelivr.net")
 
     /**
-     * 内置节点。每个都经过多轮实测（原文件、Release 下载、git clone 入口各取多次样本）后才收录；
-     * 反复出错或几乎不可用的（如 ghproxy.net：下载与克隆接近 0%）已经移除。
-     * 实际使用哪个由启动时的自动测速决定，失败的节点会被自动降级。
+     * 内置节点。每个都经过实测（原文件、Release 下载的完整性、Range 分段、git clone 入口）后才收录；
+     * 几乎不可用的（下载内容不对、超时）不收录。公共代理的稳定性会随时间变化，
+     * 实际使用哪个由启动时的自动测速和真实下载速度决定，失败的节点会被自动降级、排到后面。
      */
     val builtins = listOf(
         DIRECT,
-        JSD,
-        CdnNode("jsd-fastly", "jsDelivr · Fastly", NodeType.JsDelivr, "https://fastly.jsdelivr.net"),
-        CdnNode("jsd-gcore", "jsDelivr · Gcore", NodeType.JsDelivr, "https://gcore.jsdelivr.net"),
-        CdnNode("jsd-cf", "jsDelivr · Cloudflare", NodeType.JsDelivr, "https://testingcf.jsdelivr.net"),
         CdnNode("jsd-mirror", "jsDelivr · jsdmirror.com", NodeType.JsDelivr, "https://cdn.jsdmirror.com"),
         CdnNode("jsd-mirror-cn", "jsDelivr · jsdmirror.cn", NodeType.JsDelivr, "https://cdn.jsdmirror.cn"),
         CdnNode("ghfast", "ghfast.top", NodeType.Prefix, "https://ghfast.top/"),
         CdnNode("gh-proxy", "gh-proxy.com", NodeType.Prefix, "https://gh-proxy.com/"),
+        CdnNode("gh-proxy-cdn", "gh-proxy.com · CDN", NodeType.Prefix, "https://cdn.gh-proxy.com/"),
+        CdnNode("gh-proxy-edge", "gh-proxy.com · EdgeOne", NodeType.Prefix, "https://edgeone.gh-proxy.com/"),
         CdnNode("gh-proxy-org", "gh-proxy.org", NodeType.Prefix, "https://gh-proxy.org/"),
-        CdnNode("llkk", "gh.llkk.cc", NodeType.Prefix, "https://gh.llkk.cc/"),
         CdnNode("monlor", "gh.monlor.com", NodeType.Prefix, "https://gh.monlor.com/"),
+        CdnNode("sixyin", "gh.sixyin.com", NodeType.Prefix, "https://gh.sixyin.com/"),
+        CdnNode("chjina", "gh.chjina.com", NodeType.Prefix, "https://gh.chjina.com/"),
+        CdnNode("dpik", "gh.dpik.top", NodeType.Prefix, "https://gh.dpik.top/"),
+        CdnNode("noki", "gh.noki.icu", NodeType.Prefix, "https://gh.noki.icu/"),
+        CdnNode("gh-proxy-hk", "gh-proxy.com · 香港", NodeType.Prefix, "https://hk.gh-proxy.com/"),
+        CdnNode("llkk", "gh.llkk.cc", NodeType.Prefix, "https://gh.llkk.cc/"),
         CdnNode("ghm", "ghm.078465.xyz", NodeType.Prefix, "https://ghm.078465.xyz/"),
         CdnNode("imciel", "ghproxy.imciel.com", NodeType.Prefix, "https://ghproxy.imciel.com/"),
+        CdnNode("jsd-cf", "jsDelivr · Cloudflare", NodeType.JsDelivr, "https://testingcf.jsdelivr.net"),
+        CdnNode("jsd-fastly", "jsDelivr · Fastly", NodeType.JsDelivr, "https://fastly.jsdelivr.net"),
+        CdnNode("jsd-gcore", "jsDelivr · Gcore", NodeType.JsDelivr, "https://gcore.jsdelivr.net"),
+        JSD,
+        // ghproxy.net 可用但速度波动大：放在最后，只在前面的节点失败时作为后备，选优会按实测速度把它排后
+        CdnNode("ghproxy-net", "ghproxy.net", NodeType.Prefix, "https://ghproxy.net/"),
     )
 
+    /** 下载最多依次尝试的代理个数（之后回退直连）：节点多了也不会让失败的下载等太久 */
+    const val MAX_DOWNLOAD_PROXIES = 8
+
     /** 未测速前的默认值：取自实测延迟最低且稳定的节点 */
-    private const val DEFAULT_RAW = "jsd-cf"
+    private const val DEFAULT_RAW = "jsd-mirror"
     private const val DEFAULT_DL = "gh-proxy"
 
     private const val TEST_PATH = "github/gitignore/main/Global/macOS.gitignore"
@@ -254,7 +266,7 @@ object Net {
         if (mode == 2 || !isProxyable(url)) return listOf(DownloadTarget(DIRECT.id, DIRECT.name, url))
         val preferred = dlNode()
         val candidates = if (mode == 1) listOf(preferred) else nodes
-        return orderDownloadTargets(candidates, url, latency, downloadFailed, downloadOkId ?: preferred.id, speeds = speeds)
+        return orderDownloadTargets(candidates, url, latency, downloadFailed, downloadOkId ?: preferred.id, speeds = speeds, maxProxies = MAX_DOWNLOAD_PROXIES)
     }
 
     fun markPrivate(fullName: String) {
@@ -268,7 +280,7 @@ object Net {
 
     private fun build(node: CdnNode, o: String, r: String, ref: String, path: String): String? = when (node.type) {
         NodeType.Direct -> "https://raw.githubusercontent.com/$o/$r/$ref/$path"
-        NodeType.JsDelivr -> if (ref == "HEAD") null else "${node.base}/gh/$o/$r@$ref/$path"
+        NodeType.JsDelivr -> if (ref == "HEAD") "${node.base}/gh/$o/$r/$path" else "${node.base}/gh/$o/$r@$ref/$path"
         NodeType.Prefix -> "${node.base}https://raw.githubusercontent.com/$o/$r/$ref/$path"
     }
 
@@ -379,9 +391,11 @@ object Net {
         val failed = synchronized(this) { currentFailures(cls) }
         val okId = synchronized(this) { imageOk[cls] }
         val list = imageCandidates(url, raw, failed, okId)
-        // camo（README 里外链图片的缓存地址）只由 GitHub 自己提供；实测公共代理对它一律 403/404，
-        // 先试代理只会给每张 README 图片白加几秒延迟，因此直连优先。
-        return if (cls == "camo") list.sortedBy { if (it.first == DIRECT.id) 0 else 1 } else list
+        // camo 与头像只由 GitHub 自身及其 Fastly CDN 稳定提供；公共代理常返回 403 或超时。
+        // 未有成功节点记忆时直连优先，将等待压低至百毫秒级。
+        if (cls == "camo") return list.sortedBy { if (it.first == DIRECT.id) 0 else 1 }
+        if (cls == "avatar" && okId == null) return list.sortedBy { if (it.first == DIRECT.id) 0 else 1 }
+        return list
     }
 
     private fun imageCandidates(
@@ -627,6 +641,8 @@ fun orderDownloadTargets(
     preferredId: String,
     direct: CdnNode = CdnNode("direct", tr("直连 GitHub"), NodeType.Direct, ""),
     speeds: Map<String, Long> = emptyMap(),
+    /** 最多保留的代理个数（直连兜底不计入）；默认不限制，下载时由 [Net.MAX_DOWNLOAD_PROXIES] 限制 */
+    maxProxies: Int = Int.MAX_VALUE,
 ): List<DownloadTarget> {
     val ordered = candidates.filter { it.type == NodeType.Prefix }.sortedWith(
         compareBy<CdnNode>(
@@ -637,6 +653,6 @@ fun orderDownloadTargets(
             { latency[it.id]?.takeIf { l -> l >= 0 } ?: Long.MAX_VALUE },
         ),
     )
-    val list = ordered.map { DownloadTarget(it.id, it.name, it.base + url) }
+    val list = ordered.take(maxProxies).map { DownloadTarget(it.id, it.name, it.base + url) }
     return (list + DownloadTarget(direct.id, direct.name, url)).distinctBy { it.url }
 }

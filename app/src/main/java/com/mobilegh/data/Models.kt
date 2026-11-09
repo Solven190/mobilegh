@@ -139,7 +139,8 @@ data class Issue(
     val title: String = "",
     val user: User? = null,
     val state: String = "open",
-    val stateReason: String? = null,
+    @SerialName("state_reason") val stateReason: String? = null,
+    @SerialName("closed_by") val closedBy: User? = null,
     val labels: List<Label> = emptyList(),
     val assignees: List<User> = emptyList(),
     val milestone: Milestone? = null,
@@ -531,6 +532,7 @@ data class Step(val name: String = "", val status: String = "", val conclusion: 
 @Serializable
 data class Job(
     val id: Long = 0,
+    val runId: Long = 0,
     val name: String = "",
     val status: String = "",
     val conclusion: String? = null,

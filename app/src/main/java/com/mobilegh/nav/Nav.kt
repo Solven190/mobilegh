@@ -63,7 +63,7 @@ sealed interface Screen {
     @Serializable data class NewIssue(val owner: String, val name: String) : Screen
     @Serializable data class Actions(val owner: String, val name: String) : Screen
     @Serializable data class RunDetail(val owner: String, val name: String, val runId: Long) : Screen
-    @Serializable data class JobLog(val owner: String, val name: String, val jobId: Long, val title: String, val runId: Long = 0) : Screen
+    @Serializable data class JobLog(val owner: String, val name: String, val jobId: Long, val title: String, val runId: Long = 0, val stepNumber: Int = 0) : Screen
     /** [tag] 来自 `/releases/tag/…`、`/releases/download/…` 链接：显示并展开这个版本；`latest` 表示最新版本；为空时只列出 */
     @Serializable data class Releases(val owner: String, val name: String, val tag: String? = null, val releaseId: Long? = null) : Screen
     /** 仓库最近的推送记录：谁推送到了哪个分支 */
@@ -97,6 +97,14 @@ sealed interface Screen {
     @Serializable data class Achievements(val login: String) : Screen
     @Serializable data object Settings : Screen
     @Serializable data object Logs : Screen
+    /** 未发送的草稿列表 */
+    @Serializable data object Drafts : Screen
+    /** 首页收藏：从自己的仓库、Star 或搜索结果里添加 */
+    @Serializable data object AddFavorites : Screen
+    /** 收藏夹列表（「我的工作」入口） */
+    @Serializable data object Favorites : Screen
+    /** 稍后阅读列表（「我的工作」入口） */
+    @Serializable data object Saved : Screen
     @Serializable data object Authenticator : Screen
     @Serializable data object OrgDiagnostics : Screen
     @Serializable data object CreateRepo : Screen
@@ -104,12 +112,24 @@ sealed interface Screen {
     @Serializable data object Reauthorize : Screen
     @Serializable data class MyIssues(val pulls: Boolean, val preset: IssueQuery? = null) : Screen
     @Serializable data object HomeCustomize : Screen
+    /** 新建快捷键页面（独立全屏页） */
+    @Serializable data object NewShortcut : Screen
+    /** 首页「我的工作」动态（关注的人与仓库事件流） */
+    @Serializable data object Feed : Screen
+    /** 消息通知页面（顶栏入口） */
+    @Serializable data object Notifications : Screen
+    /** 个人主页（顶栏头像入口） */
+    @Serializable data object Me : Screen
+    /** 热门趋势页面（热门仓库与开发者，多语言/周期筛选） */
+    @Serializable data object Trending : Screen
+    /** 精选列表页面（Awesome 系列与技术合集） */
+    @Serializable data object CuratedLists : Screen
 }
 
 @Serializable enum class UserKind { Followers, Following, Stargazers, Watchers, Contributors, Members }
 @Serializable enum class RepoKind { User, Starred, Org, Forks }
 
-enum class Tab(private val titleZh: String) { Home("首页"), Repos("仓库"), Notifications("通知"), Explore("探索"), Me("我的");
+enum class Tab(private val titleZh: String) { Home("首页"), Repos("仓库"), Star("Star"), Explore("探索"), Notifications("通知"), Me("我的");
     val title: String get() = tr(titleZh) }
 
 private val ids = AtomicLong()

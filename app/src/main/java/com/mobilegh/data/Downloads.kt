@@ -182,6 +182,8 @@ data class DownloadTask(
     val nodeName: String? = null,
     /** 排队中用户点了「暂停」：不提交给 DownloadManager，直到用户继续。只对应用内排队的任务有效 */
     val paused: Boolean = false,
+    /** 是否是 MobileGH 应用自身的更新安装包 */
+    val isAppUpdate: Boolean = false,
 ) {
     val active get() = state in setOf(DownloadState.Preparing, DownloadState.Queued, DownloadState.Running, DownloadState.Waiting)
     /** 还在应用内排队、尚未交给 DownloadManager 的任务（没有 managerId） */
@@ -195,6 +197,15 @@ data class DownloadTask(
         else -> null
     }
 }
+
+@androidx.compose.runtime.Immutable
+data class FileInfo(
+    val name: String,
+    val url: String,
+    val isPrivate: Boolean,
+    val details: List<Pair<String, String>>,
+    val mimeType: String? = null,
+)
 
 /** 应用内下载：断点续传引擎（[ResumableTransfer]）负责传输，这里负责任务状态、排队、换节点、历史和文件操作；Token 不会保存。 */
 object Downloads {
@@ -251,6 +262,7 @@ object Downloads {
     val tasks = mutableStateListOf<DownloadTask>()
     var selectedKey by mutableStateOf<String?>(null)
     var showHistory by mutableStateOf(false)
+    var inspectedFile by mutableStateOf<FileInfo?>(null)
     /** 完成或失败、而用户没有在看它的弹窗时记下它；直到用户点开或点 ✕ 才消失，不会自动收起 */
     var finishedKey by mutableStateOf<String?>(null)
     val finishedTask get() = tasks.firstOrNull { it.key == finishedKey && !it.active }
@@ -309,8 +321,23 @@ object Downloads {
         if (visible) pump()
     }
 
-    fun start(rawUrl: String, filename: String?, isPrivate: Boolean, mimeType: String? = null) {
-        tasks.firstOrNull { it.url == rawUrl && it.active }?.let { selectedKey = it.key; showHistory = false; return }
+    fun start(
+        rawUrl: String,
+        filename: String?,
+        isPrivate: Boolean,
+        mimeType: String? = null,
+        isAppUpdate: Boolean = false,
+        openDialog: Boolean = false,
+    ) {
+        tasks.firstOrNull { it.url == rawUrl && it.active }?.let {
+            if (openDialog) {
+                selectedKey = it.key
+                showHistory = false
+            } else {
+                if (::context.isInitialized) context.toast(trf("该任务正在下载中：{0}", it.filename))
+            }
+            return
+        }
         val task = DownloadTask(
             url = rawUrl,
             filename = safeFilename(filename ?: Uri.parse(rawUrl).lastPathSegment ?: "download"),
@@ -320,6 +347,7 @@ object Downloads {
             targets = if (isPrivate) emptyList() else Net.downloadTargets(rawUrl),
             // 统一先记为排队，由 pump() 按名额决定是否立即开始
             state = DownloadState.Queued,
+            isAppUpdate = isAppUpdate,
         )
         tasks.add(0, task)
         // 超出保留数量的较早记录移出列表，并计数，让界面能说明移掉了多少条
@@ -327,15 +355,203 @@ object Downloads {
             val dropKeys = overflow.map { it.key }.toSet()
             tasks.removeAll { it.key in dropKeys }
             droppedRecords += overflow.size
-            prefs.edit().putInt("dropped", droppedRecords).apply()
+            if (::prefs.isInitialized) prefs.edit().putInt("dropped", droppedRecords).apply()
         }
-        selectedKey = task.key
-        showHistory = false
+        if (openDialog) {
+            selectedKey = task.key
+            showHistory = false
+        } else {
+            if (::context.isInitialized) context.toast(trf("已开始下载：{0}", task.filename))
+        }
         AppLog.info("download", tr("开始下载：") + task.filename + "（" + (if (isPrivate) "private" else "public") + "）")
         save()
         pump()
         if (tasks.firstOrNull { it.key == task.key }?.waitingForSlot == true) {
             AppLog.info("download", tr("同时下载已满，已加入排队：") + task.filename)
+        }
+    }
+
+    /** 是否属于下载文件或附件地址（如 user-attachments、Release 资源、源码归档、直接二进制文件等） */
+    fun isDownloadableUrl(url: String): Boolean {
+        val clean = url.trim()
+        val uri = runCatching { java.net.URI(clean) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme !in setOf("http", "https")) return false
+        val host = uri.host?.lowercase() ?: return false
+        val path = uri.path.orEmpty()
+
+        // 1. GitHub 附件路径
+        if (host == "github.com" || host == "www.github.com") {
+            if (path.startsWith("/user-attachments/files/") ||
+                path.startsWith("/user-attachments/assets/") ||
+                path.matches(Regex("^/[^/]+/[^/]+/files/.*$"))
+            ) {
+                return true
+            }
+            // Release 资源与归档
+            if (path.matches(Regex("^/[^/]+/[^/]+/releases/download/.*$")) ||
+                path.matches(Regex("^/[^/]+/[^/]+/archive/.*\\.(zip|tar\\.gz|tgz)$", RegexOption.IGNORE_CASE))
+            ) {
+                return true
+            }
+        }
+
+        // 2. codeload.github.com
+        if (host == "codeload.github.com") return true
+
+        // 3. objects.githubusercontent.com / S3 重定向文件
+        if (host == "objects.githubusercontent.com" ||
+            (host.endsWith(".githubusercontent.com") && (path.contains("/release-assets/") || path.contains("/user-attachments/")))
+        ) {
+            return true
+        }
+
+        // 4. 常见文件后缀
+        val last = path.trimEnd('/').substringAfterLast('/')
+        val ext = last.substringAfterLast('.', "").lowercase()
+        val downloadExts = setOf(
+            "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar",
+            "apk", "ipa", "xapk", "apks",
+            "dmg", "pkg", "deb", "rpm", "exe", "msi", "iso", "bin",
+            "jar", "war", "whl"
+        )
+        if (ext in downloadExts) {
+            // 排除源码浏览网页 /blob/ /tree/
+            if ((host == "github.com" || host == "www.github.com") &&
+                (path.contains("/blob/") || path.contains("/tree/"))
+            ) {
+                return false
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /** 弹出文件信息对话框，并异步探测文件大小和真实文件名 */
+    fun inspectUrl(url: String, defaultName: String? = null, isPrivate: Boolean = false) {
+        val cleanUrl = url.trim()
+        val uriPath = runCatching { java.net.URI(cleanUrl).path }.getOrNull().orEmpty()
+        val lastSeg = uriPath.trimEnd('/').substringAfterLast('/').takeIf { it.isNotBlank() }
+        val initialName = safeFilename(
+            defaultName?.takeIf { it.isNotBlank() && it != cleanUrl && !it.startsWith("http") }
+                ?: lastSeg
+                ?: "download"
+        )
+        val ext = initialName.substringAfterLast('.', "").lowercase()
+        val mime = if (ext.isNotEmpty()) MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) else null
+        val source = when {
+            cleanUrl.contains("/user-attachments/") -> tr("GitHub 附件")
+            cleanUrl.contains("/releases/download/") -> tr("Release 资源")
+            cleanUrl.contains("/archive/") -> tr("源码归档")
+            else -> tr("网络资源")
+        }
+
+        val initialDetails = mutableListOf<Pair<String, String>>()
+        initialDetails.add(tr("文件名") to initialName)
+        initialDetails.add(tr("来源") to source)
+        if (mime != null) {
+            initialDetails.add(tr("类型") to mime)
+        } else if (ext.isNotEmpty()) {
+            initialDetails.add(tr("类型") to ext.uppercase())
+        }
+        initialDetails.add(tr("大小") to tr("获取中…"))
+        initialDetails.add(tr("链接") to cleanUrl)
+
+        inspectedFile = FileInfo(
+            name = initialName,
+            url = cleanUrl,
+            isPrivate = isPrivate,
+            details = initialDetails,
+            mimeType = mime,
+        )
+
+        CoroutineScope(Dispatchers.IO).launch {
+            probeFileInfo(cleanUrl, initialName, source, isPrivate)
+        }
+    }
+
+    private suspend fun probeFileInfo(url: String, fallbackName: String, source: String, isPrivate: Boolean) {
+        val client = OkHttpClient.Builder()
+            .proxySelector(AppNetwork.proxySelector())
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+
+        var length = -1L
+        var contentType: String? = null
+        var dispositionFilename: String? = null
+        var lastModified: String? = null
+
+        fun extract(res: okhttp3.Response) {
+            val len = res.header("Content-Length")?.toLongOrNull() ?: -1L
+            val range = res.header("Content-Range")
+            val rangeTotal = range?.substringAfterLast('/')?.trim()?.toLongOrNull() ?: -1L
+            length = if (rangeTotal > 0) rangeTotal else len
+            contentType = res.header("Content-Type")?.substringBefore(';')?.trim()
+            val disp = res.header("Content-Disposition")
+            if (disp != null) {
+                val match = Regex("""filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?""", RegexOption.IGNORE_CASE).find(disp)
+                dispositionFilename = match?.groupValues?.get(1)?.trim()
+            }
+            lastModified = res.header("Last-Modified")
+        }
+
+        try {
+            val headReq = Request.Builder().url(url).head().apply {
+                if (isPrivate && Session.token != null) header("Authorization", "Bearer ${Session.token}")
+            }.build()
+            client.newCall(headReq).execute().use { res ->
+                if (res.isSuccessful) {
+                    extract(res)
+                } else if (res.code == 405) {
+                    val getReq = Request.Builder().url(url).header("Range", "bytes=0-0").apply {
+                        if (isPrivate && Session.token != null) header("Authorization", "Bearer ${Session.token}")
+                    }.build()
+                    client.newCall(getReq).execute().use { gRes ->
+                        if (gRes.isSuccessful || gRes.code == 206) {
+                            extract(gRes)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            return
+        }
+
+        val finalName = dispositionFilename?.takeIf { it.isNotBlank() } ?: fallbackName
+        val ext = finalName.substringAfterLast('.', "").lowercase()
+        val finalMime = contentType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+            ?: if (ext.isNotEmpty()) MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) else null
+
+        val updatedDetails = mutableListOf<Pair<String, String>>()
+        updatedDetails.add(tr("文件名") to finalName)
+        updatedDetails.add(tr("来源") to source)
+        if (finalMime != null) {
+            updatedDetails.add(tr("类型") to finalMime)
+        } else if (ext.isNotEmpty()) {
+            updatedDetails.add(tr("类型") to ext.uppercase())
+        }
+        if (length > 0) {
+            updatedDetails.add(tr("大小") to trf("{0}（{1} 字节）", com.mobilegh.ui.components.fmtSize(length), "%,d".format(length)))
+        }
+        if (!lastModified.isNullOrBlank()) {
+            updatedDetails.add(tr("修改时间") to lastModified!!)
+        }
+        updatedDetails.add(tr("链接") to url)
+
+        withContext(Dispatchers.Main) {
+            if (inspectedFile?.url == url) {
+                inspectedFile = FileInfo(
+                    name = finalName,
+                    url = url,
+                    isPrivate = isPrivate,
+                    details = updatedDetails,
+                    mimeType = finalMime,
+                )
+            }
         }
     }
 
@@ -723,7 +939,7 @@ object Downloads {
         if (task.active) return
         if (task.state == DownloadState.Complete) {
             tasks.removeAll { it.key == task.key }
-            start(task.url, task.filename, task.isPrivate, task.mimeType)
+            start(task.url, task.filename, task.isPrivate, task.mimeType, isAppUpdate = task.isAppUpdate, openDialog = true)
             return
         }
         tasks.firstOrNull { it.key == task.key }?.let { current ->

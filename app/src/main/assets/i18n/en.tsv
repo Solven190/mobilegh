@@ -130,6 +130,8 @@ GitHub 返回的分页游标无效，请刷新重试	GitHub returned an invalid 
 GitHub 讨论数据不完整：{0}	GitHub discussion data is incomplete: {0}
 下载准备被中断，请重试	Download preparation was interrupted, please try again
 开始下载：	Download started: 
+已开始下载：{0}	Download started: {0}
+该任务正在下载中：{0}	Download in progress: {0}
 无法开始下载：	Cannot start the download: 
 无法开始下载	Cannot start the download
 请先登录 GitHub 后下载	Sign in to GitHub before downloading
@@ -605,9 +607,11 @@ MobileGH 已锁定	MobileGH is locked
 下载失败	Download failed
 已取消下载	Download canceled
 下载文件	Download file
+下载详情	Download details
 保存到 MobileGH 的下载目录	Save to MobileGH's download folder
 保存到手机「下载」文件夹	Save to the phone's Downloads folder
 安装更新	Install update
+安装应用	Install app
 打开文件	Open file
 后台下载	Download in background
 重新下载	Download again
@@ -875,6 +879,7 @@ GitHub 列表仓库读取不完整，请刷新	GitHub list repository reading is
  · 只读	 · read-only
  · 已同步	 · synced
 重新加载	Reload
+无法加载图片	Failed to load image
 新建 GitHub 列表	New GitHub list
 列表与 GitHub 同步；公开列表可被其他人查看。	Lists sync with GitHub; public lists can be viewed by others.
 查看公开的 GitHub 列表。	View public GitHub lists.
@@ -2767,3 +2772,230 @@ GitHub 不允许用 Token 上传附件（上传只接受网页登录），请在
 上传策略缺少确认令牌	Upload policy is missing the confirmation token
 登录 GitHub（用于添加附件）	Sign in to GitHub (to add attachments)
 视频	Video
+更多评论加载失败，点按重试	Failed to load more comments. Tap to retry
+草稿已保存，可在「我的 → 草稿」继续编辑	Draft saved. Continue it from Me → Drafts
+最多收藏 {0} 个仓库	You can favorite up to {0} repositories
+已加入收藏：{0}	Added to favorites: {0}
+已移出收藏：{0}	Removed from favorites: {0}
+添加收藏	Add favorites
+已收藏 {0} 个仓库	{0} favorite repositories
+搜索仓库	Search repositories
+仓库名或 owner/name	Repository name or owner/name
+搜索结果	Search results
+你的仓库	Your repositories
+Star 的仓库	Starred repositories
+工作流	Workflows
+如 README、.md、src/main	e.g. README, .md, src/main
+文件树还在读取，先用 GitHub 搜索（仅默认分支）	File tree still loading; using GitHub search (default branch only)
+仓库很大，文件树不完整，改用 GitHub 搜索（仅默认分支）	Repository is large and the file tree is incomplete; using GitHub search (default branch only)
+正在读取仓库文件树…输入关键词或点上面的预设，可以直接用 GitHub 搜索	Loading the file tree… Type a keyword or tap a preset above to search with GitHub right away
+{0} 个结果	{0} results
+GitHub 搜索没有找到匹配的文件。新提交的文件需要等 GitHub 建好索引；也可以按目录浏览	GitHub search found no matching files. Newly pushed files appear after GitHub indexes them; you can also browse by folder
+新建 Issue · {0}	New issue · {0}
+评论 · {0}#{1}	Comment · {0}#{1}
+审查意见 · {0}#{1}	Review · {0}#{1}
+行内评论 · {0}#{1}	Line comment · {0}#{1}
+新建 Pull Request · {0}	New pull request · {0}
+新建讨论 · {0}	New discussion · {0}
+讨论回复 · {0}#{1}	Discussion reply · {0}#{1}
+Gist 评论 · {0}	Gist comment · {0}
+新建文件 · {0}	New file · {0}
+编辑文件 · {0}/{1}	Edit file · {0}/{1}
+表单已填写部分内容	Form partially filled in
+（只有标签、指派人等设置）	(Only labels, assignees or similar settings)
+{0} 条未发送的内容	{0} unsent items
+清空全部草稿	Clear all drafts
+没有草稿。写到一半的 Issue、评论、PR 等会自动保存在这里	No drafts. Unfinished issues, comments, pull requests and more are saved here automatically
+这条草稿来自旧版本，无法定位原页面	This draft is from an older version and can't be linked to its page
+未知位置（旧版本草稿）	Unknown location (older draft)
+保存于 {0}	Saved {0}
+已删除草稿	Draft deleted
+删除草稿	Delete draft
+清空全部草稿？	Clear all drafts?
+所有未发送的 Issue、评论、PR 等草稿都会被删除，无法恢复。	All unsent drafts of issues, comments, pull requests and more will be deleted. This can't be undone.
+打开仓库 {0}	Open repository {0}
+把常用仓库加入收藏，在首页一键打开，不用每次搜索。	Add repositories you use often to open them from Home in one tap, without searching each time.
+置顶的 Issue	Pinned issues
+取消置顶	Unpin
+置顶到仓库	Pin to repository
+已取消置顶	Unpinned
+已置顶到仓库 Issue 列表顶部	Pinned to the top of the repository's issue list
+初始化	Initialize
+添加 .gitignore	Add .gitignore
+添加许可证	Add license
+选择 .gitignore 或许可证时，GitHub 会用它们生成第一个提交。	If you choose a .gitignore or license, GitHub creates the first commit with them.
+连接 GitHub Apps	Connect GitHub Apps
+创建后在浏览器中打开该仓库的 GitHub Apps 设置，为它安装应用	After creating, open the repository's GitHub Apps settings in the browser to install apps
+选择 .gitignore 模板	Choose a .gitignore template
+选择许可证	Choose a license
+跳过此版本	Skip this version
+稍后	Later
+编辑仓库信息	Edit repository details
+还没有描述，点按添加	No description yet. Tap to add one
+编辑描述、网址和主题	Edit description, website and topics
+图片加载失败：{0}（点按重试）	Image failed to load: {0} (tap to retry)
+图片加载失败（点按重试）	Image failed to load (tap to retry)
+gh-proxy.com · 香港	gh-proxy.com · Hong Kong
+成就读取完成：{0} 个，{1} 毫秒	Achievements loaded: {0}, {1} ms
+收藏夹	Favorites
+将仓库加入收藏夹以便随时快速访问，而无需搜索	Add repositories to favorites for quick access at any time without searching
+快捷键	Shortcuts
+整理	Organize
+共 {0} 个仓库	{0} repositories
+整理收藏	Organize favorites
+还没有收藏的仓库	No favorite repositories yet
+把常用仓库加入收藏，打开 App 就能一键进入。	Add repositories you use often so you can open them in one tap.
+加入收藏	Add to favorites
+移出收藏	Remove from favorites
+已加入收藏	Added to favorites
+已移出收藏	Removed from favorites
+移出收藏 {0}	Remove {0} from favorites
+在仓库页右上角菜单选择「加入收藏」，常用仓库就会出现在收藏夹。	Choose "Add to favorites" in the top-right menu of a repository page and frequently used repositories will appear in Favorites.
+也可以在收藏夹中长按收藏的仓库来调整。	You can also long press a favorited repository in Favorites to adjust it.
+还没有提交记录	No commits yet
+来自 {0} 个分支的提交历史	From the commit history of {0} branches
+未知用户	Unknown user
+{0} 推送了 1 个提交到{1} {2}	{0} pushed 1 commit to {1} {2}
+当前授权未开放 Projects 接口权限	Current authorization has not granted Projects API access
+GitHub 官方移动端授权受服务端限制，未开放 Projects v2 API。你可以直接在浏览器中打开查看，或使用 Token / 设备码登录以在 App 中原生使用。	GitHub mobile authorization does not grant Projects v2 API access. You can open and view this in the browser, or sign in with a Token / Device Code for native project access.
+在浏览器中直接查看	Open directly in browser
+重新授权（补齐权限）	Reauthorize with full permissions
+使用设备授权码登录（网页授权 · 支持 Projects 权限）	Sign in with device code (browser authorization, supports Projects)
+回到顶部按钮	Scroll-to-top button
+列表向下翻过第一屏后，在右下角显示按钮	Show a button in the bottom-right corner after scrolling past the first screen
+稍后阅读	Saved
+清空稍后阅读	Clear saved items
+暂无稍后阅读内容	No saved items yet
+在 Issue、Pull Request、讨论或仓库的右上角菜单中选择「保存到稍后阅读」，即可在此集中查看。	Choose "Save for later" in the top-right menu of an Issue, Pull Request, Discussion, or repository to view them here.
+保存到稍后阅读	Save for later
+移出稍后阅读	Remove from saved
+已保存到稍后阅读	Saved for later
+已移出稍后阅读	Removed from saved
+设置状态	Set status
+快速设置	Quick presets
+选择表情	Choose an emoji
+状态说明	Status message
+正在忙什么？	What's happening?
+标记为忙碌（Busy）	Busy
+他人将能看到你当前处理事务受限	Indicates to others that you have limited availability
+自动清除	Clear status
+不自动清除	Never
+30 分钟	30 minutes
+1 小时	1 hour
+4 小时	4 hours
+今天结束	Today
+本周末	This week
+清除当前状态	Clear status
+清除状态失败	Failed to clear status
+保存状态失败	Failed to save status
+专注中	Focusing
+休假中	On vacation
+居家办公	Working from home
+身体不适	Out sick
+发布新功能	Shipping features
+全部语言	All languages
+热门开发者	Trending Developers
+复制文字	Copy text
+已复制文字	Text copied
+删除失败（HTTP {0}）	Delete failed (HTTP {0})
+无标题	Untitled
+登录 GitHub（用于网页会话与附件）	Sign in to GitHub (for web session and attachments)
+享受美食	Enjoying food
+清除状态	Clear status
+忙碌	Busy
+删除历史版本？	Delete this revision?
+登录 GitHub（用于删除历史版本）	Sign in to GitHub (to delete revisions)
+删除失败	Delete failed
+删除后该版本的正文记录将被永久清除，但编辑者与时间仍会保留。此操作无法撤销。	The body text of this revision will be permanently removed. The editor and timestamp remain. This cannot be undone.
+{0} 编辑于 {1}（已删除）	{0} edited {1} (deleted)
+{0} 编辑于 {1} · 最新	{0} edited {1} · latest
+删除此版本	Delete this revision
+此历史版本的正文内容已被删除	The body of this revision has been deleted
+登录 GitHub（同步网页会话）	Sign in to GitHub (sync web session)
+验证码 {0} 已复制，请在页面粘贴	Verification code {0} copied, paste it on the page
+输入授权码（双线同步）	Enter authorization code (dual-channel sync)
+GitHub 授权登录（双线同步）	GitHub authorization sign-in (dual-channel sync)
+在应用内打开授权	Open authorization in app
+在系统外部浏览器打开	Open in system browser
+全部类型	All types
+未找到匹配的通知	No matching notifications
+筛选出 {0} 条（共 {1} 条）	{0} of {1} shown
+全部仓库	All repositories
+已筛选：显示 {0} 条（已加载 {1} 条）	Filtered: {0} of {1} loaded
+按时间排列 · 筛选仅作用于已加载的通知	Sorted by time · filters apply to loaded notifications only
+查看全部通知（含已读）	View all notifications (including read)
+该仓库下没有匹配的 {0}	No matching {0} in this repository
+已加载的通知里没有 {0}	No {0} in loaded notifications
+在 {0} 中没有匹配的通知	No matching notifications in {0}
+关于 Issue / PR 通知	About Issue / PR notifications
+• 若在网页端或其他设备已点开或标记过，通知将自动移至「全部（含已读）」\n• 请确保在对应仓库开启了「关注（Watch）」设置以接收他人新建的 Issue / PR	• Notifications already opened or marked elsewhere move to "All (including read)"
+• Make sure Watch is enabled on the repository to receive new Issues / PRs from others
+暂无稍后阅读内容，可以在 Issue、PR、讨论或仓库的右上角菜单中选择「保存到稍后阅读」。	Nothing saved for later yet. Use the top-right menu on an Issue, PR, discussion or repository to save it.
+热门仓库	Trending repositories
+查看全部通知	View all notifications
+查看文件信息	View file info
+GitHub 附件	GitHub attachment
+Release 资源	Release asset
+源码归档	Source archive
+网络资源	Network resource
+获取中…	Fetching…
+用浏览器打开？	Open in browser?
+即将离开应用并在系统浏览器中打开以下链接：	You are about to leave the app and open the following link in a browser:
+当天贡献	Day contributions
+所在周（{0} 次）	Week ({0})
+无贡献记录	No contribution records
+本周 7 天共 {0} 次贡献	{0} contributions in this week
+正在读取贡献明细…	Loading contribution details…
+暂无贡献记录	No contribution records
+未产生公开提交、拉取请求、评审或议题。	No public commits, pull requests, reviews, or issues.
+另有 {0} 次私有贡献（受隐私设置保护）	{0} private contributions (protected by privacy settings)
+参与贡献的仓库	Contributed repositories
+该日动态明细	Activity on this day
+{0}活跃分布与构成	{0} activity distribution and composition
+全年共 {0} 次贡献 · 占全年总量 {1}%	{0} contributions this year · {1}% of total
+活跃周数	Active weeks
+平均贡献/周	Avg contributions/week
+贡献占比	Contribution share
+最高单日	Highest day
+全年中所有 {0} 的记录	All records for {0} throughout the year
+点按任意一天可直接查看该日的具体构成	Tap any day to view its specific composition
+自定义快捷入口	Customize shortcuts
+全部 Star 列表	All Star lists
+主题标签（Topics）	Topics
+暂无标签，在下方输入后点「+」添加	No topics yet. Enter below and tap "+" to add
+新标签名称	New topic name
+输入标签名称	Enter topic name
+点按标签气泡即可直接移除；单个标签仅限小写字母、数字和连字符	Tap a topic bubble to remove it; lowercase letters, numbers, and hyphens only
+添加标签	Add topic
+查看饼状图构成分析	View pie chart breakdown
+贡献构成分析	Contribution breakdown analysis
+全年贡献构成分析	Annual contribution breakdown
+共 {0} 次公开贡献 · {1} 种贡献类型	{0} public contributions · {1} contribution types
+次总贡献	total contributions
+点按扇区查看	Tap a sector to inspect
+各成分占比与说明	Component breakdown & descriptions
+在默认或其它分支上提交的代码版本记录	Code commits made to the default or other branches
+向代码仓库发起的拉取与合并请求	Pull and merge requests opened on repositories
+对其他协作者提交 PR 的评审与反馈	Code reviews and feedback submitted on pull requests
+在仓库中创建的问题报告、功能建议或讨论	Issue reports, feature requests, or discussions
+主持或创建的全新开源与私有代码仓库	New repositories created or hosted
+另有 {0} 次私有仓库贡献，因隐私设置未纳入上方公开成分。	Additional {0} private contributions are not included in public breakdown due to privacy settings.
+{0} 贡献构成	{0} contribution breakdown
+第 {0} 周贡献构成	Week {0} contribution breakdown
+热门推荐	Trending Recommendations
+换一批	Shuffle
+换一批推荐	Shuffle Recommendations
+查看全部热门	View All Trending
+README / 项目速览（内容预览）	README / Overview (Preview)
+展示一半内容	Half-content preview
+点击查看具体详情与完整内容	Tap to view full details and content
+关注动态	Activity Feed
+查看仓库全部内容与代码	View full repository and code
+默认分支：{0} · 最新推送：{1}	Default branch: {0} · Updated: {1}
+ · 协议：{0}	 · License: {0}
+调整入口顺序	Adjust shortcut order
+向左移动	Move left
+向右移动	Move right
+移到最前面	Move to front
+移到最后面	Move to end
+移出工作区	Remove from workspace

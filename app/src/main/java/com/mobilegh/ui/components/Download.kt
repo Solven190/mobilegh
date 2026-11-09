@@ -84,6 +84,9 @@ fun DownloadHost() {
             }
         }) { Text(trf("只删除手机上的「{0}」，GitHub 上的内容不受影响，删除后无法恢复。", task.filename), color = g.fg, fontSize = 14.sp) }
     }
+    Downloads.inspectedFile?.let { info ->
+        FileInfoDialog(info) { Downloads.inspectedFile = null }
+    }
     val selected = Downloads.tasks.firstOrNull { it.key == Downloads.selectedKey }
     if (selected != null) {
         // 记录是完成的，但文件已经不在手机上：不再显示「下载完成」，改为提供重新下载
@@ -94,12 +97,13 @@ fun DownloadHost() {
             selected.state == DownloadState.Complete -> tr("下载完成")
             selected.state == DownloadState.Failed -> tr("下载失败")
             selected.state == DownloadState.Cancelled -> tr("已取消下载")
-            else -> tr("下载文件")
+            else -> tr("下载详情")
         }
         AlertDialog(
             onDismissRequest = { Downloads.selectedKey = null },
             containerColor = g.canvas,
             shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.dialogFrame(),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Oc(
@@ -139,7 +143,15 @@ fun DownloadHost() {
                 when {
                     done -> TextButton({
                         if (selected.filename.endsWith(".apk", true)) Downloads.installApk(ctx, selected) else Downloads.open(ctx, selected)
-                    }) { Text(if (selected.filename.endsWith(".apk", true)) tr("安装更新") else tr("打开文件"), color = g.accent, fontWeight = FontWeight.SemiBold) }
+                    }) {
+                        val label = when {
+                            selected.filename.endsWith(".apk", true) -> {
+                                if (selected.isAppUpdate || com.mobilegh.data.Update.isPendingUpdate(selected.filename)) tr("安装更新") else tr("安装应用")
+                            }
+                            else -> tr("打开文件")
+                        }
+                        Text(label, color = g.accent, fontWeight = FontWeight.SemiBold)
+                    }
                     selected.active -> TextButton({ Downloads.selectedKey = null }) { Text(tr("后台下载"), color = g.accent, fontWeight = FontWeight.SemiBold) }
                     // 文件已不在时也走这里：按同一个 URL 重新下载
                     else -> TextButton({ Downloads.retry(selected) }) {
@@ -159,6 +171,7 @@ fun DownloadHost() {
             onDismissRequest = { Downloads.showHistory = false },
             containerColor = g.canvas,
             shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.dialogFrame(),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("下载记录"), color = g.fg, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -179,7 +192,7 @@ fun DownloadHost() {
                     if (Downloads.tasks.isEmpty()) {
                         Text(tr("还没有下载记录"), color = g.fgMuted)
                     } else {
-                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        ScrollbarLazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             items(Downloads.tasks, key = { it.key }) { task ->
                                 var menu by remember { mutableStateOf(false) }
                                 val missing = Downloads.isFileMissing(task)
@@ -256,6 +269,7 @@ fun DownloadHost() {
                 onDismissRequest = { clearDialog = false },
                 containerColor = g.canvas,
                 shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.dialogFrame(),
                 title = { Text(tr("清空下载记录"), color = g.fg, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) },
                 text = { Text(tr("是否同时删除已下载到手机的文件？删除后无法恢复。正在下载或排队中的任务会保留。"), color = g.fgMuted, fontSize = 14.sp, lineHeight = 20.sp) },
                 confirmButton = {
@@ -430,13 +444,7 @@ private fun DownloadProgress(task: DownloadTask) {
 }
 
 /** 下载前查看的文件信息 */
-data class FileInfo(
-    val name: String,
-    val url: String,
-    val isPrivate: Boolean,
-    val details: List<Pair<String, String>>,
-    val mimeType: String? = null,
-)
+typealias FileInfo = com.mobilegh.data.FileInfo
 
 /**
  * 点资源先弹出详情：完整文件名（可选中复制）、大小、类型、下载次数、时间等，
@@ -452,6 +460,7 @@ fun FileInfoDialog(info: FileInfo, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         containerColor = g.canvas,
         shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.dialogFrame(),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Oc(R.drawable.oc_package, g.fgMuted, 20.dp)
@@ -460,7 +469,7 @@ fun FileInfoDialog(info: FileInfo, onDismiss: () -> Unit) {
             }
         },
         text = {
-            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
                 androidx.compose.foundation.text.selection.SelectionContainer {
                     Text(info.name, color = g.fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, lineHeight = 21.sp)
                 }
@@ -492,7 +501,15 @@ fun FileInfoDialog(info: FileInfo, onDismiss: () -> Unit) {
                     TextButton({
                         onDismiss()
                         if (done.filename.endsWith(".apk", true)) Downloads.installApk(ctx, done) else Downloads.open(ctx, done)
-                    }) { Text(tr("打开"), color = g.accent, fontWeight = FontWeight.SemiBold) }
+                    }) {
+                        val label = when {
+                            done.filename.endsWith(".apk", true) -> {
+                                if (done.isAppUpdate || com.mobilegh.data.Update.isPendingUpdate(done.filename)) tr("安装更新") else tr("安装应用")
+                            }
+                            else -> tr("打开")
+                        }
+                        Text(label, color = g.accent, fontWeight = FontWeight.SemiBold)
+                    }
                 }
                 else -> TextButton({ onDismiss(); Downloads.start(info.url, info.name, info.isPrivate, info.mimeType) }) {
                     Text(tr("下载"), color = g.accent, fontWeight = FontWeight.SemiBold)

@@ -1,6 +1,8 @@
 package com.mobilegh.ui.screens
 
 import androidx.compose.foundation.background
+import com.mobilegh.ui.components.verticalScrollWithBar
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,9 +36,11 @@ import com.mobilegh.data.AppLogEntry
 import com.mobilegh.nav.LocalNav
 import com.mobilegh.ui.components.Card
 import com.mobilegh.ui.components.Chips
+import com.mobilegh.ui.components.Dropdown
 import com.mobilegh.ui.components.EmptyState
 import com.mobilegh.ui.components.GhDialog
 import com.mobilegh.ui.components.GhField
+import com.mobilegh.ui.components.HDivider
 import com.mobilegh.ui.components.MenuAction
 import com.mobilegh.ui.components.MoreMenu
 import com.mobilegh.ui.components.Page
@@ -87,9 +92,22 @@ fun LogsScreen(onBack: (() -> Unit)? = null) {
         },
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            Chips(LOG_CATEGORIES.map { it.second }, LOG_CATEGORIES.indexOfFirst { it.first == category }.coerceAtLeast(0)) {
-                category = LOG_CATEGORIES[it].first
+            val options = LOG_CATEGORIES.map { it.second }
+            val selIdx = LOG_CATEGORIES.indexOfFirst { it.first == category }.coerceAtLeast(0)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(tr("分类"), color = g.fgMuted, fontSize = 13.sp)
+                Spacer(Modifier.weight(1f))
+                Dropdown(
+                    label = options.getOrElse(selIdx) { tr("全部") },
+                    options = options,
+                    onSelect = { category = LOG_CATEGORIES[it].first },
+                    active = category != null,
+                )
             }
+            HDivider(Modifier.padding(bottom = 6.dp))
             GhField(
                 query,
                 { query = it },
@@ -100,7 +118,7 @@ fun LogsScreen(onBack: (() -> Unit)? = null) {
             if (filtered.isEmpty()) {
                 EmptyState(if (query.isBlank()) tr("暂无日志") else tr("没有匹配的日志"), R.drawable.oc_log, action = if (query.isBlank()) null else tr("清除搜索"), onAction = { query = "" })
             } else {
-                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+                ScrollbarLazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
                     items(filtered, key = { it.id }) { entry ->
                         LogRow(entry, expanded = expanded == entry.id) {
                             expanded = if (expanded == entry.id) null else entry.id
@@ -149,7 +167,7 @@ private fun LogRow(entry: AppLogEntry, expanded: Boolean, onClick: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     entry.detail,
-                    Modifier.fillMaxWidth().background(g.canvasInset).padding(8.dp).verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxWidth().background(g.canvasInset).padding(8.dp).verticalScrollWithBar(),
                     color = g.fgMuted,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,

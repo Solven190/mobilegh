@@ -1,6 +1,8 @@
 package com.mobilegh.ui.screens
 
 import androidx.compose.foundation.background
+import com.mobilegh.ui.components.verticalScrollWithBar
+import com.mobilegh.ui.components.ScrollbarLazyColumn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
@@ -267,7 +270,7 @@ fun GistDetailScreen(id: String) {
     ) { pad ->
         LoadBox(gist, Modifier.padding(pad).fillMaxSize()) { (d, files) ->
             SelectionContainer {
-            LazyColumn(Modifier.fillMaxSize()) {
+            ScrollbarLazyColumn(Modifier.fillMaxSize()) {
                 item {
                     Column(Modifier.padding(16.dp)) {
                         if (!d.description.isNullOrBlank()) Text(d.description, fontSize = 16.sp, color = g.fg)
@@ -360,7 +363,9 @@ fun GistDetailScreen(id: String) {
 private fun GistLine(i: Int, line: AnnotatedString) {
     val g = Gh.c
     Row(Modifier.fillMaxWidth()) {
-        Text("${i + 1}", Modifier.width(40.dp).padding(end = 8.dp), style = CodeStyle, color = g.fgMuted.copy(alpha = 0.7f), textAlign = TextAlign.End)
+        DisableSelection {
+            Text("${i + 1}", Modifier.width(40.dp).padding(end = 8.dp), style = CodeStyle, color = g.fgMuted.copy(alpha = 0.7f), textAlign = TextAlign.End)
+        }
         Text(line, Modifier.weight(1f).padding(end = 8.dp), style = CodeStyle, color = g.fg)
     }
 }
@@ -458,7 +463,7 @@ fun GistEditorScreen(id: String?) {
                 }
             }
             val validation = gistFilesError(state.files, state.removed)
-            Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
+            Column(Modifier.fillMaxSize().imePadding().verticalScrollWithBar().padding(vertical = 12.dp)) {
                 GhField(
                     state.description, { if (!busy) state.description = it }, tr("描述（可选）"),
                     Modifier.padding(horizontal = 16.dp), placeholder = tr("这个 Gist 是做什么的"),
